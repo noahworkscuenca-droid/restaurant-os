@@ -96,8 +96,8 @@ def render_accounting_page():
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total facturas",      len(invoices))
-        m2.metric("Monto total",         f"${total:,.2f}")
-        m3.metric("Contado / Crédito",   f"${cash:,.2f} / ${credit:,.2f}")
+        m2.metric("Monto total",         f"₡{total:,.2f}")
+        m3.metric("Contado / Crédito",   f"₡{cash:,.2f} / ₡{credit:,.2f}")
         m4.metric("Requieren revisión",  needs_review,
                   delta=f"{'⚠️ ' if needs_review else '✅'}", delta_color="off")
         st.divider()
@@ -150,7 +150,7 @@ def _render_invoice_row(inv: dict):
             st.markdown(sale_badges.get(sale_type, sale_type), unsafe_allow_html=True)
 
         with cols[3]:
-            st.markdown(f"**${inv.get('total_amount', 0):,.2f}** {inv.get('currency','USD')}")
+            st.markdown(f"**₡{inv.get('total_amount', 0):,.2f}**")
 
         with cols[4]:
             st.markdown(status_badges.get(status, status))
@@ -212,9 +212,9 @@ def render_accounts_payable_page():
     due_soon       = [p for p in payables if p.get("payment_urgency") == "POR_VENCER"]
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Total pendiente",    f"${total_debt:,.2f}", delta_color="off")
-    m2.metric("🔴 Vencidas",        len(overdue),  delta=f"${sum(p['total_amount'] for p in overdue):,.2f}", delta_color="inverse")
-    m3.metric("🟡 Vencen en 7 días", len(due_soon), delta=f"${sum(p['total_amount'] for p in due_soon):,.2f}", delta_color="off")
+    m1.metric("Total pendiente",    f"₡{total_debt:,.2f}", delta_color="off")
+    m2.metric("🔴 Vencidas",        len(overdue),  delta=f"₡{sum(p['total_amount'] for p in overdue):,.2f}", delta_color="inverse")
+    m3.metric("🟡 Vencen en 7 días", len(due_soon), delta=f"₡{sum(p['total_amount'] for p in due_soon):,.2f}", delta_color="off")
 
     st.divider()
 
@@ -252,7 +252,7 @@ def render_accounts_payable_page():
 
             cols = st.columns([2, 1, 1])
             with cols[0]:
-                st.markdown(f"### ${p.get('total_amount',0):,.2f} {p.get('currency','USD')}")
+                st.markdown(f"### ₡{p.get('total_amount',0):,.2f}")
             with cols[1]:
                 if st.button(f"✅ Pagar", key=f"payable_{p['id']}"):
                     db.table("invoices").update({
