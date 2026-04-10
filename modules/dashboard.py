@@ -1,244 +1,123 @@
-# v2
-"""
-modules/dashboard.py — Dashboard principal rediseñado (estilo SaaS moderno)
-"""
-
-from datetime import date
 import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
 from modules.database import get_supabase_client
 
 
-# ── Helpers de tarjetas HTML ─────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
+def _kpi_card(label, value, delta=None, delta_color="normal"):
+    st.metric(label=label, value=value, delta=delta, delta_color=delta_color)
 
-def _kpi_card(label: str, value: str, sublabel: str = "", accent: str = "#6366F1") -> str:
-    """Tarjeta de KPI financiero con acento superior de color."""
-    return f"""
-    <div style="
-        background: #fff;
-        border-radius: 14px;
-        padding: 1.2rem 1.4rem;
-        box-shadow: 0 1px 8px rgba(0,0,0,0.07);
-        border-top: 4px solid {accent};
-        min-height: 110px;
-    ">
-        <p style="margin:0; font-size:0.7rem; font-weight:600; color:#9CA3AF;
-                  text-transform:uppercase; letter-spacing:0.07em;">{label}</p>
-        <p style="margin:0.3rem 0 0.2rem; font-size:1.85rem; font-weight:800;
-                  color:#0F172A; line-height:1.1;">{value}</p>
-        <p style="margin:0; font-size:0.78rem; color:#94A3B8;">{sublabel}</p>
-    </div>"""
-
-
-def _alert_card(icon: str, title: str, body: str,
-                accent: str, bg: str) -> str:
-    """Tarjeta de alerta con acento lateral de color."""
-    return f"""
-    <div style="
-        background: {bg};
-        border-radius: 14px;
-        padding: 1.1rem 1.3rem;
-        box-shadow: 0 1px 8px rgba(0,0,0,0.06);
-        border-left: 5px solid {accent};
-        min-height: 95px;
-    ">
-        <p style="margin:0; font-size:1.6rem; line-height:1;">{icon}</p>
-        <p style="margin:0.35rem 0 0.1rem; font-size:0.97rem; font-weight:700;
-                  color:#0F172A;">{title}</p>
-        <p style="margin:0; font-size:0.8rem; color:#64748B;">{body}</p>
-    </div>"""
-
-
-# ── Render principal ─────────────────────────────────────────────
 
 def render_dashboard():
+    st.title("📊 Dashboard Financiero")
+    usuario = st.session_state.get("usuario_actual", "")
+    if usuario:
+        st.caption(f"Bienvenido, {usuario} 👋")
 
-    db    = get_supabase_client()
-    today = date.today()
+    try:
+        supabase = get_supabase_client()
+    except Exception:
+        st.error("No se puede conectar con Supabase. Verifica tus credenciales.")
+        return
 
-    st.markdown("## 📊 Dashboard")
-    st.caption(f"Resumen al {today.strftime('%d de %B de %Y')}")
+    # ── Cargar facturas ──────────────────────────────────────────────────────
+    try:
+        inv_res = supabase.table("invoices").select(
+            "id, supplier, total_amount, payment_type, status, invoice_date, due_date"
+        ).execute()
+        invoices = inv_res.data or []
+    except Exception as e:
+        st.error(f"Error al cargar facturas: {e}")
+        invoices = []
 
-    # ── Consultas ────────────────────────────────────────────────────────────────────
-    month_invoices = (
-        db.table("invoices")
-        .select("total_amount, sale_type, status")
-        .eq("fiscal_year",  today.year)
-        .eq("fiscal_month", today.month)
-        .neq("status", "ANULADA")
-        .execute()
-    )
-    inv_data = month_invoices.data or []
-
-    total_spent    = sum(i.get("total_amount", 0) or 0 for i in inv_data)
-    cash_spent     = sum(i.get("total_amount", 0) or 0 for i in inv_data
-                        if i.get("sale_type") == "CONTADO")
-    pending_credit = sum(i.get("total_amount", 0) or 0 for i in inv_data
-                        if i.get("sale_type") == "CREDITO"
-                        and i.get("status") in ("PENDIENTE", "APROBADA"))
-
-    stock_result = db.table("v_stock_status").select("stock_status").execute()
-    stock_data   = stock_result.data or []
-    red_stock    = sum(1 for s in stock_data if s.get("stock_status") == "ROJO")
-    yellow_stock = sum(1 for s in stock_data if s.get("stock_status") == "AMARILLO")
-
-    payable_result = (
-        db.table("v_accounts_payable")
-        .select("payment_urgency, total_amount")
-        .execute()
-    )
-    payables       = payable_result.data or []
-    overdue_count  = sum(1 for p in payables if p.get("payment_urgency") == "VENCIDA")
-    overdue_amount = sum(
-        p.get("total_amount", 0) or 0
-        for p in payables if p.get("payment_urgency") == "VENCIDA"
+    df = pd.DataFrame(invoices) if invoices else pd.DataFrame(
+        columns=["id", "supplier", "total_amount", "payment_type", "status", "invoice_date", "due_date"]
     )
 
-    # ── Fila 1: KPIs financieros ─────────────────────────────────────────────────────
-    st.markdown(
-        "<p style='margin:1.2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
-        "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-        "Este mes</p>",
-        unsafe_allow_html=True,
-    )
+    if not df.empty:
+        df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
+        df["invoice_date"] = pd.to_datetime(df["invoice_date"], errors="coerce")
+        df["due_date"] = pd.to_datetime(df["due_date"], errors="coerce")
 
+    today = datetime.today()
+    in_7_days = today + timedelta(days=7)
+
+    # Cálculos
+    total_spent   = df["total_amount"].sum() if not df.empty else 0
+    cash_spent    = df.loc[df["payment_type"] == "contado", "total_amount"].sum() if not df.empty else 0
+    credit_total  = df.loc[df["payment_type"] == "credito", "total_amount"].sum() if not df.empty else 0
+    pending_df    = df[(df["status"] == "pendiente") & (df["payment_type"] == "credito")] if not df.empty else pd.DataFrame()
+    pending_credit= pending_df["total_amount"].sum()
+    overdue_df    = pending_df[pending_df["due_date"] < today] if not pending_df.empty else pd.DataFrame()
+    overdue_amt   = overdue_df["total_amount"].sum()
+    soon_df       = pending_df[(pending_df["due_date"] >= today) & (pending_df["due_date"] <= in_7_days)] if not pending_df.empty else pd.DataFrame()
+    soon_amt      = soon_df["total_amount"].sum()
+    num_invoices  = len(df)
+
+    # ── Alerta de vencidos ──────────────────────────────────────────────────
+    if overdue_amt > 0:
+        st.error(
+            f"🚨 **{len(overdue_df)} factura{'s' if len(overdue_df) > 1 else ''} vencida{'s' if len(overdue_df) > 1 else ''}** — "
+            f"₡{overdue_amt:,.2f} pendientes de pago"
+        )
+    elif soon_amt > 0:
+        st.warning(f"⚠️ **{len(soon_df)} factura{'s' if len(soon_df) > 1 else ''}** vence en los próximos 7 días — ₡{soon_amt:,.2f}")
+
+    # ── KPIs ────────────────────────────────────────────────────────────────
+    st.markdown("### Resumen de compras")
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(
-        _kpi_card("Total compras",    f"₡{total_spent:,.2f}",
-                  "Todas las facturas del mes", "#6366F1"),
-        unsafe_allow_html=True,
-    )
-    c2.markdown(
-        _kpi_card("Pagado (contado)", f"₡{cash_spent:,.2f}",
-                  "Facturas de contado", "#10B981"),
-        unsafe_allow_html=True,
-    )
-    c3.markdown(
-        _kpi_card("Por pagar", f"₡{pending_credit:,.2f}",
-                  "Crédito pendiente",
-                  "#F59E0B" if pending_credit > 0 else "#10B981"),
-        unsafe_allow_html=True,
-    )
-    c4.markdown(
-        _kpi_card("Facturas cargadas", str(len(inv_data)),
-                  "Este mes", "#3B82F6"),
-        unsafe_allow_html=True,
-    )
+    with c1:
+        _kpi_card("Total compras", f"₡{total_spent:,.2f}")
+    with c2:
+        _kpi_card("Pagado (contado)", f"₡{cash_spent:,.2f}")
+    with c3:
+        _kpi_card("Por pagar (crédito)", f"₡{pending_credit:,.2f}",
+                  delta=f"₡{overdue_amt:,.2f} vencidas" if overdue_amt > 0 else None,
+                  delta_color="inverse" if overdue_amt > 0 else "normal")
+    with c4:
+        _kpi_card("Facturas cargadas", str(num_invoices))
 
-    # ── Fila 2: Alertas activas ────────────────────────────────────────────────────────────────────
-    st.markdown(
-        "<p style='margin:2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
-        "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-        "Alertas activas</p>",
-        unsafe_allow_html=True,
-    )
+    st.divider()
 
-    a1, a2, a3 = st.columns(3)
+    # ── Ventas Loyverse (placeholder) ───────────────────────────────────────
+    st.markdown("### Ventas (Loyverse POS)")
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Ventas hoy", "₡0.00", delta="Sin datos aún")
+    v2.metric("Ventas este mes", "₡0.00")
+    v3.metric("Ticket promedio", "₡0.00")
+    st.caption("💡 Conecta Loyverse en la pestaña **🔄 Loyverse POS** para ver tus ventas aquí.")
 
-    # — Stock crítico
-    if red_stock > 0:
-        a1.markdown(
-            _alert_card("🔴", f"{red_stock} producto(s) críticos",
-                        "Stock por debajo del mínimo", "#EF4444", "#FEF2F2"),
-            unsafe_allow_html=True,
+    st.divider()
+
+    # ── Gráfico de gastos por fecha ─────────────────────────────────────────
+    if not df.empty and df["invoice_date"].notna().any():
+        st.markdown("### 📈 Flujo de compras")
+        gastos = (
+            df.dropna(subset=["invoice_date"])
+            .groupby(df["invoice_date"].dt.date)["total_amount"]
+            .sum()
+            .reset_index()
         )
-        a1.button("Ver inventario →", key="dash_red", use_container_width=True)
+        gastos.columns = ["Fecha", "Total (₡)"]
+        gastos = gastos.sort_values("Fecha")
+        st.line_chart(gastos.set_index("Fecha"))
+
+    # ── Facturas recientes ──────────────────────────────────────────────────
+    st.markdown("### 🧾 Facturas recientes")
+    if not df.empty:
+        recent = df.sort_values("invoice_date", ascending=False).head(8)
+        table_data = []
+        for _, row in recent.iterrows():
+            estado = row.get("status", "")
+            badge = "🔴 Vencida" if (estado == "pendiente" and pd.notna(row["due_date"]) and row["due_date"] < today) else                     "🟡 Pendiente" if estado == "pendiente" else "🟢 Pagada"
+            table_data.append({
+                "Proveedor": row.get("supplier", "—"),
+                "Monto": f"₡{row['total_amount']:,.2f}",
+                "Tipo": row.get("payment_type", "—").capitalize(),
+                "Estado": badge,
+                "Fecha": row["invoice_date"].strftime("%d/%m/%Y") if pd.notna(row["invoice_date"]) else "—",
+            })
+        st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
     else:
-        a1.markdown(
-            _alert_card("🟢", "Sin stock crítico",
-                        "Todos los niveles están OK", "#10B981", "#F0FDF4"),
-            unsafe_allow_html=True,
-        )
-
-    # — Stock bajo
-    if yellow_stock > 0:
-        a2.markdown(
-            _alert_card("🟡", f"{yellow_stock} producto(s) bajos",
-                        "Reabastecer pronto", "#F59E0B", "#FFFBEB"),
-            unsafe_allow_html=True,
-        )
-    else:
-        a2.markdown(
-            _alert_card("🟢", "Stock saludable",
-                        "Sin alertas de reabastecimiento", "#10B981", "#F0FDF4"),
-            unsafe_allow_html=True,
-        )
-
-    # — Facturas vencidas
-    if overdue_count > 0:
-        a3.markdown(
-            _alert_card("🔴", f"{overdue_count} factura(s) vencida(s)",
-                        f"₡{overdue_amount:,.2f} pendientes", "#EF4444", "#FEF2F2"),
-            unsafe_allow_html=True,
-        )
-        a3.button("Ver cuentas →", key="dash_payable", use_container_width=True)
-    else:
-        a3.markdown(
-            _alert_card("🟢", "Sin facturas vencidas",
-                        "Cuentas por pagar al día", "#10B981", "#F0FDF4"),
-            unsafe_allow_html=True,
-        )
-
-    # ── Gráfico por categoría ──────────────────────────────────────────────────────────────────────────────
-    cat_result = (
-        db.table("v_accounting_summary")
-        .select("category_name, total_amount")
-        .eq("fiscal_year",  today.year)
-        .eq("fiscal_month", today.month)
-        .execute()
-    )
-    cat_data = cat_result.data or []
-
-    if cat_data:
-        st.markdown(
-            "<p style='margin:2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
-            "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-            "Gastos por categoría</p>",
-            unsafe_allow_html=True,
-        )
-        import pandas as pd
-        df_cat = pd.DataFrame(cat_data).rename(
-            columns={"category_name": "Categoría", "total_amount": "Total (₡)"}
-        )
-        st.bar_chart(df_cat.set_index("Categoría")["Total (₡)"])
-
-    # ── Últimas 5 facturas ────────────────────────────────────────────────────────────────────────────────
-    st.markdown(
-        "<p style='margin:2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
-        "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-        "Últimas 5 facturas</p>",
-        unsafe_allow_html=True,
-    )
-
-    recent_result = (
-        db.table("invoices")
-        .select(
-            "invoice_number, invoice_date, total_amount, currency, status, "
-            "suppliers(name), invoice_categories(name)"
-        )
-        .order("created_at", desc=True)
-        .limit(5)
-        .execute()
-    )
-    recent = recent_result.data or []
-
-    st.markdown('<div class="table-wrap">', unsafe_allow_html=True)
-    if not recent:
-        st.info("Aún no hay facturas. Usa 📷 Escanear Factura para cargar la primera.")
-    else:
-        import pandas as pd
-        rows = [
-            {
-                "Proveedor": (inv.get("suppliers") or {}).get("name", "—"),
-                "Categoría": (inv.get("invoice_categories") or {}).get("name", "—"),
-                "Fecha":     inv.get("invoice_date", "—"),
-                "Monto":     f"₡{inv.get('total_amount', 0):,.2f}",
-                "Estado":    inv.get("status", ""),
-            }
-            for inv in recent
-        ]
-        st.dataframe(
-            pd.DataFrame(rows),
-            width="stretch",
-            hide_index=True,
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.info("Aún no hay facturas. Ve a **📷 Escanear Factura** para comenzar.")
