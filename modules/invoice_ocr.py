@@ -297,22 +297,12 @@ def render_invoice_upload_page():
     with col_upload:
         st.subheader("1. Selecciona la imagen")
 
-        upload_method = st.radio(
-            "Método de carga",
-            ["📁 Subir archivo", "📷 Cámara (móvil)"],
-            horizontal=True,
-            label_visibility="collapsed",
+        uploaded_file = st.file_uploader(
+            "📸 Toca aquí para tomar una foto o subir la factura",
+            type=["jpg", "jpeg", "png", "webp", "heic", "pdf"],
+            label_visibility="visible",
+            help="En el celular: el sistema te preguntará si quieres tomar una foto o elegir de la galería.",
         )
-
-        uploaded_file = None
-        if upload_method == "📁 Subir archivo":
-            uploaded_file = st.file_uploader(
-                "Arrastra tu factura aquí",
-                type=["jpg", "jpeg", "png", "webp", "heic", "pdf"],
-                label_visibility="visible",
-            )
-        else:
-            uploaded_file = st.camera_input("Toma una foto de la factura")
 
         if uploaded_file:
             image_bytes = uploaded_file.read()
