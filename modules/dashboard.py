@@ -7,7 +7,7 @@ import streamlit as st
 from modules.database import get_supabase_client
 
 
-# ── Helpers de tarjetas HTML ─────────────────────────────────────────────────
+# ── Helpers de tarjetas HTML ─────────────────────────────────────────────
 
 def _kpi_card(label: str, value: str, sublabel: str = "", accent: str = "#6366F1") -> str:
     """Tarjeta de KPI financiero con acento superior de color."""
@@ -47,7 +47,7 @@ def _alert_card(icon: str, title: str, body: str,
     </div>"""
 
 
-# ── Render principal ─────────────────────────────────────────────────────────
+# ── Render principal ─────────────────────────────────────────────
 
 def render_dashboard():
 
@@ -57,7 +57,7 @@ def render_dashboard():
     st.markdown("## 📊 Dashboard")
     st.caption(f"Resumen al {today.strftime('%d de %B de %Y')}")
 
-    # ── Consultas ────────────────────────────────────────────────────────────
+    # ── Consultas ────────────────────────────────────────────────────────────────────
     month_invoices = (
         db.table("invoices")
         .select("total_amount, sale_type, status")
@@ -92,7 +92,7 @@ def render_dashboard():
         for p in payables if p.get("payment_urgency") == "VENCIDA"
     )
 
-    # ── Fila 1: KPIs financieros ─────────────────────────────────────────────
+    # ── Fila 1: KPIs financieros ─────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:1.2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
@@ -102,17 +102,17 @@ def render_dashboard():
 
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(
-        _kpi_card("Total compras",    f"${total_spent:,.2f}",
+        _kpi_card("Total compras",    f"₡{total_spent:,.2f}",
                   "Todas las facturas del mes", "#6366F1"),
         unsafe_allow_html=True,
     )
     c2.markdown(
-        _kpi_card("Pagado (contado)", f"${cash_spent:,.2f}",
+        _kpi_card("Pagado (contado)", f"₡{cash_spent:,.2f}",
                   "Facturas de contado", "#10B981"),
         unsafe_allow_html=True,
     )
     c3.markdown(
-        _kpi_card("Por pagar", f"${pending_credit:,.2f}",
+        _kpi_card("Por pagar", f"₡{pending_credit:,.2f}",
                   "Crédito pendiente",
                   "#F59E0B" if pending_credit > 0 else "#10B981"),
         unsafe_allow_html=True,
@@ -123,7 +123,7 @@ def render_dashboard():
         unsafe_allow_html=True,
     )
 
-    # ── Fila 2: Alertas activas ──────────────────────────────────────────────
+    # ── Fila 2: Alertas activas ────────────────────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
@@ -166,7 +166,7 @@ def render_dashboard():
     if overdue_count > 0:
         a3.markdown(
             _alert_card("🔴", f"{overdue_count} factura(s) vencida(s)",
-                        f"${overdue_amount:,.2f} pendientes", "#EF4444", "#FEF2F2"),
+                        f"₡{overdue_amount:,.2f} pendientes", "#EF4444", "#FEF2F2"),
             unsafe_allow_html=True,
         )
         a3.button("Ver cuentas →", key="dash_payable", use_container_width=True)
@@ -177,7 +177,7 @@ def render_dashboard():
             unsafe_allow_html=True,
         )
 
-    # ── Gráfico por categoría ─────────────────────────────────────────────────
+    # ── Gráfico por categoría ──────────────────────────────────────────────────────────────────────────────
     cat_result = (
         db.table("v_accounting_summary")
         .select("category_name, total_amount")
@@ -196,11 +196,11 @@ def render_dashboard():
         )
         import pandas as pd
         df_cat = pd.DataFrame(cat_data).rename(
-            columns={"category_name": "Categoría", "total_amount": "Total ($)"}
+            columns={"category_name": "Categoría", "total_amount": "Total (₡)"}
         )
-        st.bar_chart(df_cat.set_index("Categoría")["Total ($)"])
+        st.bar_chart(df_cat.set_index("Categoría")["Total (₡)"])
 
-    # ── Últimas 5 facturas ────────────────────────────────────────────────────
+    # ── Últimas 5 facturas ────────────────────────────────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:2rem 0 0.6rem;font-size:0.8rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
@@ -230,7 +230,7 @@ def render_dashboard():
                 "Proveedor": (inv.get("suppliers") or {}).get("name", "—"),
                 "Categoría": (inv.get("invoice_categories") or {}).get("name", "—"),
                 "Fecha":     inv.get("invoice_date", "—"),
-                "Monto":     f"${inv.get('total_amount', 0):,.2f} {inv.get('currency', '')}",
+                "Monto":     f"₡{inv.get('total_amount', 0):,.2f}",
                 "Estado":    inv.get("status", ""),
             }
             for inv in recent
