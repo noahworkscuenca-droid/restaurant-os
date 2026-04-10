@@ -1,3 +1,4 @@
+# v2
 """
 modules/dashboard.py — Dashboard principal rediseñado (estilo SaaS moderno)
 """
