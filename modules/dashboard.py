@@ -9,7 +9,7 @@ import pandas as pd
 from modules.database import get_supabase_client
 
 
-# ── Helpers de tarjetas ───────────────────────────────────────────────────────
+# ── Helpers de tarjetas ─────────────────────────────────────────────────────────────────────────────────
 
 def _kpi_card(label: str, value: str, sublabel: str = "", accent: str = "#6366F1") -> str:
     return f"""
@@ -36,16 +36,16 @@ def _alert_card(icon: str, title: str, body: str, accent: str, bg: str) -> str:
     </div>"""
 
 
-# ── Render principal ──────────────────────────────────────────────────────────
+# ── Render principal ────────────────────────────────────────────────────────────────────────────────────
 
 def render_dashboard():
     db    = get_supabase_client()
     today = date.today()
 
-    st.markdown("## \u{1f4ca} Dashboard")
+    st.markdown("## Dashboard")
     st.caption(f"Resumen al {today.strftime('%d de %B de %Y')}")
 
-    # ── Cargar facturas sin joins para evitar errores de FK ───────────────────
+    # ── Cargar todas las facturas (sin joins) ───────────────────────────────────────────────────────────────────────
     try:
         res = (
             db.table("invoices")
@@ -56,32 +56,33 @@ def render_dashboard():
         )
         all_invoices = res.data or []
     except Exception as e:
-        st.error(f"\u26a0\ufe0f Error al cargar facturas: {e}")
+        st.error(f"Error al cargar facturas: {e}")
         all_invoices = []
 
-    # ── Métricas globales ─────────────────────────────────────────────────────
+    # ── Metricas globales ─────────────────────────────────────────────────────────────────────────────────────────────
     if not all_invoices:
-        st.info("\u{1f4ed} Aún no hay facturas registradas. \u00a1Empieza escaneando una!")
+        st.info("Sin facturas registradas aun. Empieza escaneando una.")
     else:
         total_spend    = sum(float(i.get("total_amount") or 0) for i in all_invoices)
         total_invoices = len(all_invoices)
         avg_amount     = total_spend / total_invoices if total_invoices else 0.0
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("\u{1f4b0} Gasto total",          f"\u20a1{total_spend:,.2f}")
-        m2.metric("\u{1f9fe} Facturas registradas", str(total_invoices))
-        m3.metric("\u{1f4ca} Promedio por factura", f"\u20a1{avg_amount:,.2f}")
+        m1.metric("Gasto total",          f"C{total_spend:,.2f}")
+        m2.metric("Facturas registradas", str(total_invoices))
+        m3.metric("Promedio por factura", f"C{avg_amount:,.2f}")
 
         st.markdown(
             "<p style='margin:1.5rem 0 0.4rem;font-size:0.78rem;font-weight:700;"
             "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-            "Gasto acumulado por día</p>",
+            "Gasto acumulado por dia</p>",
             unsafe_allow_html=True,
         )
         df = pd.DataFrame(all_invoices)
         date_col = "invoice_date" if "invoice_date" in df.columns else "created_at"
         df["_fecha"]       = pd.to_datetime(df[date_col], errors="coerce").dt.date
         df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
+
         df_daily = (
             df.dropna(subset=["_fecha"])
             .groupby("_fecha")["total_amount"]
@@ -95,7 +96,7 @@ def render_dashboard():
 
     st.divider()
 
-    # ── KPIs de contado vs crédito ────────────────────────────────────────────
+    # ── KPIs contado vs credito ─────────────────────────────────────────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:0 0 0.6rem;font-size:0.78rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
@@ -115,13 +116,13 @@ def render_dashboard():
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(_kpi_card("Total compras",    f"\u20a1{total_spent:,.2f}",    "Todas las facturas",  "#6366F1"), unsafe_allow_html=True)
-    c2.markdown(_kpi_card("Pagado (contado)", f"\u20a1{cash_spent:,.2f}",    "Facturas de contado", "#10B981"), unsafe_allow_html=True)
-    c3.markdown(_kpi_card("Por pagar",        f"\u20a1{pending_credit:,.2f}", "Crédito pendiente",
-                          "#F59E0B" if pending_credit > 0 else "#10B981"),                                        unsafe_allow_html=True)
-    c4.markdown(_kpi_card("Facturas cargadas", str(len(all_invoices)),         "Total registradas",   "#3B82F6"), unsafe_allow_html=True)
+    c1.markdown(_kpi_card("Total compras",    f"C{total_spent:,.2f}",    "Todas las facturas",  "#6366F1"), unsafe_allow_html=True)
+    c2.markdown(_kpi_card("Pagado (contado)", f"C{cash_spent:,.2f}",    "Facturas de contado", "#10B981"), unsafe_allow_html=True)
+    c3.markdown(_kpi_card("Por pagar",        f"C{pending_credit:,.2f}", "Credito pendiente",
+                          "#F59E0B" if pending_credit > 0 else "#10B981"),                                  unsafe_allow_html=True)
+    c4.markdown(_kpi_card("Facturas cargadas", str(len(all_invoices)),   "Total registradas",   "#3B82F6"), unsafe_allow_html=True)
 
-    # ── Alertas ───────────────────────────────────────────────────────────────
+    # ── Alertas ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:2rem 0 0.6rem;font-size:0.78rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
@@ -144,50 +145,51 @@ def render_dashboard():
         p = db.table("v_accounts_payable").select("payment_urgency, total_amount").execute()
         payables       = p.data or []
         overdue_count  = sum(1 for x in payables if x.get("payment_urgency") == "VENCIDA")
-        overdue_amount = sum(float(x.get("total_amount") or 0)
-                             for x in payables if x.get("payment_urgency") == "VENCIDA")
+        overdue_amount = sum(float(x.get("total_amount") or 0) for x in payables
+                             if x.get("payment_urgency") == "VENCIDA")
     except Exception:
         pass
 
     a1, a2, a3 = st.columns(3)
     a1.markdown(
-        _alert_card("\ud83d\udd34", f"{red_stock} producto(s) críticos", "Stock bajo mínimo",    "#EF4444", "#FEF2F2")
+        _alert_card("ROJO", f"{red_stock} producto(s) criticos",  "Stock bajo minimo",       "#EF4444", "#FEF2F2")
         if red_stock > 0 else
-        _alert_card("\ud83d\udfe2", "Sin stock crítico",                 "Todos los niveles OK", "#10B981", "#F0FDF4"),
+        _alert_card("OK",   "Sin stock critico",                  "Todos los niveles OK",    "#10B981", "#F0FDF4"),
         unsafe_allow_html=True,
     )
     a2.markdown(
-        _alert_card("\ud83d\udfe1", f"{yellow_stock} producto(s) bajos", "Reabastecer pronto",   "#F59E0B", "#FFFBEB")
+        _alert_card("BAJO", f"{yellow_stock} producto(s) bajos", "Reabastecer pronto",      "#F59E0B", "#FFFBEB")
         if yellow_stock > 0 else
-        _alert_card("\ud83d\udfe2", "Stock saludable",                   "Sin alertas de stock", "#10B981", "#F0FDF4"),
+        _alert_card("OK",   "Stock saludable",                   "Sin alertas de stock",    "#10B981", "#F0FDF4"),
         unsafe_allow_html=True,
     )
     a3.markdown(
-        _alert_card("\ud83d\udd34", f"{overdue_count} factura(s) vencida(s)",
-                    f"\u20a1{overdue_amount:,.2f} pendientes", "#EF4444", "#FEF2F2")
+        _alert_card("VENC", f"{overdue_count} factura(s) vencida(s)",
+                    f"C{overdue_amount:,.2f} pendientes",              "#EF4444", "#FEF2F2")
         if overdue_count > 0 else
-        _alert_card("\ud83d\udfe2", "Sin facturas vencidas", "Cuentas al día", "#10B981", "#F0FDF4"),
+        _alert_card("OK",   "Sin facturas vencidas",                  "Cuentas al dia",      "#10B981", "#F0FDF4"),
         unsafe_allow_html=True,
     )
 
-    # ── Últimas 5 facturas ────────────────────────────────────────────────────
+    # ── Ultimas 5 facturas ─────────────────────────────────────────────────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:2rem 0 0.6rem;font-size:0.78rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-        "Últimas 5 facturas</p>",
+        "Ultimas 5 facturas</p>",
         unsafe_allow_html=True,
     )
 
     if not all_invoices:
-        st.info("Aún no hay facturas. Usa Escanear Factura para cargar la primera.")
+        st.info("Sin facturas. Usa Escanear Factura para cargar la primera.")
     else:
+        recientes = all_invoices[:5]
         rows = [
             {
-                "Fecha":  (r.get("invoice_date") or r.get("created_at", "")[:10]),
-                "Monto":  f"\u20a1{float(r.get('total_amount') or 0):,.2f}",
-                "Tipo":   r.get("sale_type", "—"),
-                "Estado": r.get("status", "—"),
+                "Fecha":  r.get("invoice_date") or r.get("created_at", "")[:10],
+                "Monto":  f"C{float(r.get('total_amount') or 0):,.2f}",
+                "Tipo":   r.get("sale_type", "-"),
+                "Estado": r.get("status", "-"),
             }
-            for r in all_invoices[:5]
+            for r in recientes
         ]
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
