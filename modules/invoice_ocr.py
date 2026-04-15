@@ -200,12 +200,12 @@ def upload_invoice_image(image_bytes: bytes, file_extension: str = "jpg") -> Opt
     filename = f"invoices/{date.today().isoformat()}/{uuid.uuid4()}.{file_extension}"
 
     try:
-        db.storage.from_("invoice-images").upload(
+        db.storage.from_("invoices").upload(
             path=filename,
             file=image_bytes,
             file_options={"content-type": "application/pdf" if file_extension == "pdf" else f"image/{file_extension}"},
         )
-        url_response = db.storage.from_("invoice-images").get_public_url(filename)
+        url_response = db.storage.from_("invoices").get_public_url(filename)
         return url_response
     except Exception as e:
         st.warning(f"No se pudo subir la imagen a Storage: {e}")
