@@ -11,6 +11,14 @@ from datetime import date, datetime
 from io import BytesIO
 from typing import Optional
 
+# Palabras que no sirven para matching (stop words en español)
+_STOP_WORDS = {
+    "de", "del", "la", "el", "los", "las", "un", "una", "con", "sin",
+    "por", "para", "en", "a", "y", "o", "al", "su", "sus", "kg", "gr",
+    "lt", "ml", "oz", "lbs", "unidad", "unidades", "caja", "bolsa",
+    "paquete", "galon", "gal", "litro", "litros", "kilo", "kilos",
+}
+
 import streamlit as st
 from PIL import Image
 
@@ -30,9 +38,9 @@ except ImportError:
 
 from modules.database import get_supabase_client
 
-# Inicializar cliente con la API key
-_API_KEY = os.getenv("GEMINI_API_KEY", "")
-_client: Optional[genai.Client] = None
+# Inicializar cliente Gemini (singleton lazy)
+_client: Optional["genai.Client"] = None  # type: ignore[name-defined]
+
 
 def _get_client():
     """Retorna el cliente Gemini (singleton)."""
@@ -105,12 +113,15 @@ def _build_prompt_with_aliases() -> str:
             aliases = [a.strip() for a in aliases_raw.split(",") if a.strip()]
             if aliases:
                 alias_options = " o ".join(f'"{a}"' for a in aliases)
-                alias_lines.append(f'  - Si la factura dice {alias_options} → usar "{canonical}"')
+                alias_lines.append(
+                    f'  - Si la factura dice {alias_options} → usar "{canonical}"'
+                )
 
         if alias_lines:
             alias_block = (
                 "\n\nREGLA CRÍTICA PARA supplier_name: Tenemos un diccionario de proveedores. "
-                "Compara el nombre del emisor de la factura con estos alias y devuelve el nombre interno si hay coincidencia:\n"
+                "Compara el nombre del emisor de la factura con estos alias y devuelve el nombre "
+                "interno si hay coincidencia:\n"
                 + "\n".join(alias_lines)
                 + "\n  - Si no coincide con ninguno, escribe el nombre exacto como aparece en la factura."
             )
@@ -125,31 +136,48 @@ def _build_prompt_with_aliases() -> str:
 
 def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
     """
-    Convierte cualquier archivo (PDF o imagen) a JPEG comprimido ≤1024px.
+    Convierte cualquier archivo (PDF o imagen) a JPEG comprimido.
+    Garantiza que el resultado sea < 1 MB reduciendo calidad iterativamente.
     Retorna (jpeg_bytes, "image/jpeg").
     """
-    MAX_PX  = 1024
-    DPI_PDF = 150
+    MAX_PX       = 1024          # lado máximo en píxeles
+    TARGET_BYTES = 900_000       # límite conservador (< 1 MB)
+    DPI_PDF      = 150
 
+    # ── Convertir a imagen PIL ────────────────────────────────────────────────
     if mime_type == "application/pdf":
-        if PYMUPDF_AVAILABLE:
-            doc  = fitz.open(stream=image_bytes, filetype="pdf")
-            page = doc.load_page(0)
-            pix  = page.get_pixmap(dpi=DPI_PDF)
-            img  = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        else:
+        if not PYMUPDF_AVAILABLE:
             raise ImportError("PyMuPDF no instalado. Ejecuta: pip install PyMuPDF")
+        doc  = fitz.open(stream=image_bytes, filetype="pdf")
+        page = doc.load_page(0)
+        pix  = page.get_pixmap(dpi=DPI_PDF)
+        img  = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     else:
         img = Image.open(BytesIO(image_bytes))
 
     if img.mode != "RGB":
         img = img.convert("RGB")
 
+    # ── Redimensionar si supera MAX_PX ────────────────────────────────────────
     if max(img.size) > MAX_PX:
         img.thumbnail((MAX_PX, MAX_PX), Image.Resampling.LANCZOS)
 
-    buf = BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    # ── Comprimir iterativamente hasta quedar bajo TARGET_BYTES ───────────────
+    quality = 85
+    while quality >= 40:
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        if buf.tell() <= TARGET_BYTES:
+            break
+        quality -= 10
+
+    # Si con quality=40 sigue siendo grande, reducir la resolución a la mitad
+    if buf.tell() > TARGET_BYTES:
+        w, h = img.size
+        img = img.resize((w // 2, h // 2), Image.Resampling.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=75)
+
     return buf.getvalue(), "image/jpeg"
 
 
@@ -157,21 +185,25 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str
 
 def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """
-    Comprime el archivo y lo envía a Google Gemini para extracción estructurada.
+    Comprime el archivo y lo envía a Google Gemini 1.5 Flash para extracción
+    estructurada de datos de la factura.
+    Retorna un dict con los campos extraídos o {"error": "..."} si falla.
     """
     raw_text = ""
     try:
-        # Comprimir antes de enviar (ahorra tokens x20 en PDFs)
+        # 1. Comprimir antes de enviar
         compressed_bytes, compressed_mime = _compress_for_gemini(image_bytes, mime_type)
 
+        # 2. Construir prompt (con alias de proveedores si existen)
         prompt = _build_prompt_with_aliases()
 
-        # Empaquetar imagen con el nuevo SDK
+        # 3. Empaquetar imagen con el nuevo SDK
         image_part = types.Part.from_bytes(
             data=compressed_bytes,
             mime_type=compressed_mime,
         )
 
+        # 4. Llamar a Gemini 2.5 Flash
         client = _get_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -180,7 +212,7 @@ def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> d
 
         raw_text = response.text.strip()
 
-        # Limpiar markdown si Gemini lo añade
+        # 5. Limpiar markdown si Gemini lo añade
         raw_text = re.sub(r"^```[a-z]*\n?", "", raw_text)
         raw_text = re.sub(r"\n?```$", "", raw_text)
 
@@ -203,7 +235,11 @@ def upload_invoice_image(image_bytes: bytes, file_extension: str = "jpg") -> Opt
         db.storage.from_("invoices").upload(
             path=filename,
             file=image_bytes,
-            file_options={"content-type": "application/pdf" if file_extension == "pdf" else f"image/{file_extension}"},
+            file_options={
+                "content-type": "application/pdf"
+                if file_extension == "pdf"
+                else f"image/{file_extension}"
+            },
         )
         url_response = db.storage.from_("invoices").get_public_url(filename)
         return url_response
@@ -212,34 +248,38 @@ def upload_invoice_image(image_bytes: bytes, file_extension: str = "jpg") -> Opt
         return None
 
 
-def save_invoice_to_db(ocr_data: dict, image_url: Optional[str], image_path: Optional[str]) -> Optional[str]:
-    """Persiste la factura y sus líneas en Supabase."""
+def save_invoice_to_db(
+    ocr_data: dict,
+    image_url: Optional[str],
+    image_path: Optional[str],
+) -> Optional[str]:
+    """Persiste la factura y sus líneas de detalle en Supabase."""
     db = get_supabase_client()
 
-    supplier_id  = _get_or_create_supplier(ocr_data.get("supplier_name"))
-    category_name = ocr_data.get("category", "Otros")
-    category_id   = CATEGORY_MAP.get(category_name, 5)
-    invoice_date  = ocr_data.get("invoice_date") or date.today().isoformat()
+    supplier_id    = _get_or_create_supplier(ocr_data.get("supplier_name"))
+    category_name  = ocr_data.get("category", "Otros")
+    category_id    = CATEGORY_MAP.get(category_name, 5)
+    invoice_date   = ocr_data.get("invoice_date") or date.today().isoformat()
     due_date       = ocr_data.get("due_date")
 
     invoice_payload = {
-        "supplier_id":       supplier_id,
-        "invoice_number":    ocr_data.get("invoice_number"),
-        "invoice_date":      invoice_date,
-        "category_id":       category_id,
-        "sale_type":         ocr_data.get("sale_type", "CONTADO").upper(),
-        "subtotal":          ocr_data.get("subtotal"),
-        "tax_amount":        ocr_data.get("tax_amount"),
-        "total_amount":      ocr_data.get("total_amount", 0),
-        "currency":          ocr_data.get("currency", "USD"),
-        "due_date":          due_date,
-        "status":            "PENDIENTE",
-        "image_url":         image_url,
-        "image_path":        image_path,
-        "ocr_raw_response":  {"raw": ocr_data.get("_raw_response")},
-        "ocr_confidence":    ocr_data.get("confidence"),
-        "ocr_processed_at":  datetime.utcnow().isoformat(),
-        "needs_review":      ocr_data.get("needs_review", False),
+        "supplier_id":      supplier_id,
+        "invoice_number":   ocr_data.get("invoice_number"),
+        "invoice_date":     invoice_date,
+        "category_id":      category_id,
+        "sale_type":        ocr_data.get("sale_type", "CONTADO").upper(),
+        "subtotal":         ocr_data.get("subtotal"),
+        "tax_amount":       ocr_data.get("tax_amount"),
+        "total_amount":     ocr_data.get("total_amount", 0),
+        "currency":         ocr_data.get("currency", "USD"),
+        "due_date":         due_date,
+        "status":           "PENDIENTE",
+        "image_url":        image_url,
+        "image_path":       image_path,
+        "ocr_raw_response": {"raw": ocr_data.get("_raw_response")},
+        "ocr_confidence":   ocr_data.get("confidence"),
+        "ocr_processed_at": datetime.utcnow().isoformat(),
+        "needs_review":     ocr_data.get("needs_review", False),
     }
 
     result = db.table("invoices").insert(invoice_payload).execute()
@@ -249,6 +289,7 @@ def save_invoice_to_db(ocr_data: dict, image_url: Optional[str], image_path: Opt
 
     invoice_id = result.data[0]["id"]
 
+    # Guardar líneas de detalle
     line_items = ocr_data.get("line_items") or []
     if line_items:
         items_payload = [
@@ -260,7 +301,8 @@ def save_invoice_to_db(ocr_data: dict, image_url: Optional[str], image_path: Opt
                 "unit_price":  item.get("unit_price"),
                 "line_total":  item.get("line_total"),
             }
-            for item in line_items if item.get("description")
+            for item in line_items
+            if item.get("description")
         ]
         if items_payload:
             db.table("invoice_items").insert(items_payload).execute()
@@ -290,7 +332,10 @@ def render_invoice_upload_page():
     """Renderiza la página principal de escaneo/carga de facturas."""
 
     st.title("📷 Escanear Factura")
-    st.caption("Sube una foto de tu factura física y la IA de Google extraerá los datos automáticamente.")
+    st.caption(
+        "Sube una foto de tu factura física y la IA de Google extraerá los datos "
+        "automáticamente."
+    )
 
     col_upload, col_preview = st.columns([1, 1], gap="large")
 
@@ -298,18 +343,22 @@ def render_invoice_upload_page():
         st.subheader("1. Selecciona la imagen")
 
         uploaded_file = st.file_uploader(
-            "📸 Toca aquí para tomar una foto o subir la factura",
-            type=["jpg", "jpeg", "png", "webp", "heic", "pdf"],
+            "📁 Sube la factura (JPG, PNG o PDF)",
+            type=["jpg", "jpeg", "png", "pdf"],
             label_visibility="visible",
-            help="En el celular: el sistema te preguntará si quieres tomar una foto o elegir de la galería.",
+            help="Formatos admitidos: JPG, JPEG, PNG, PDF. Tamaño máximo recomendado: 10 MB.",
         )
 
         if uploaded_file:
             image_bytes = uploaded_file.read()
             mime_type   = uploaded_file.type or "image/jpeg"
-            file_ext    = uploaded_file.name.rsplit(".", 1)[-1].lower() if hasattr(uploaded_file, "name") else "jpg"
+            file_ext    = (
+                uploaded_file.name.rsplit(".", 1)[-1].lower()
+                if hasattr(uploaded_file, "name")
+                else "jpg"
+            )
 
-            # Vista previa
+            # ── Vista previa ─────────────────────────────────────────────────
             with col_preview:
                 st.subheader("Vista previa")
                 if mime_type == "application/pdf":
@@ -336,7 +385,11 @@ def render_invoice_upload_page():
             if "ocr_procesando" not in st.session_state:
                 st.session_state["ocr_procesando"] = False
 
-            boton_label = "⏳ Procesando..." if st.session_state["ocr_procesando"] else "🤖 Extraer datos con Google Gemini"
+            boton_label = (
+                "⏳ Procesando..."
+                if st.session_state["ocr_procesando"]
+                else "🤖 Extraer datos con Google Gemini"
+            )
             boton = st.button(
                 boton_label,
                 type="primary",
@@ -349,8 +402,13 @@ def render_invoice_upload_page():
                 st.rerun()
 
             if st.session_state["ocr_procesando"]:
-                with st.spinner("Comprimiendo y analizando factura con IA..."):
-                    ocr_result = extract_invoice_data(image_bytes, mime_type)
+                with st.spinner("Comprimiendo y analizando factura con IA…"):
+                    try:
+                        ocr_result = extract_invoice_data(image_bytes, mime_type)
+                    except Exception as e:
+                        st.error(f"❌ Error inesperado al llamar a Gemini: {e}")
+                        st.session_state["ocr_procesando"] = False
+                        return
 
                 st.session_state["ocr_procesando"] = False
 
@@ -366,26 +424,53 @@ def render_invoice_upload_page():
                         st.error(f"❌ Error al procesar: {err_msg}")
                     return
 
+                # Persistir resultado en session_state
                 st.session_state["ocr_result"]  = ocr_result
                 st.session_state["image_bytes"] = image_bytes
                 st.session_state["mime_type"]   = mime_type
                 st.session_state["file_ext"]    = file_ext
 
-            if "ocr_result" in st.session_state and st.session_state["ocr_result"]:
-                _render_ocr_review_form()
+        # Renderizar formulario de revisión si hay datos en sesión
+        if st.session_state.get("ocr_result"):
+            _render_ocr_review_form()
+
+
+def _tokenize(text: str) -> set:
+    """Extrae palabras útiles (>= 3 chars, sin stop words) de un texto."""
+    words = set(re.findall(r'\b[a-záéíóúüñ]{3,}\b', text.lower()))
+    return words - _STOP_WORDS
 
 
 def _best_inventory_match(description: str, inventory_items: list) -> int:
     """
     Devuelve el índice en inv_options (0 = No actualizar) del mejor match
     entre la descripción OCR y los nombres de inventario.
+    Usa coincidencia exacta de subcadena primero, luego por palabras clave.
     """
     desc_lower = description.lower()
+    desc_words = _tokenize(description)
+
+    best_idx   = 0
+    best_score = 0
+
     for j, inv in enumerate(inventory_items):
         ing = inv["ingredient_name"].lower()
+        ing_words = _tokenize(inv["ingredient_name"])
+
+        # Prioridad 1: coincidencia exacta de subcadena
         if ing in desc_lower or desc_lower in ing:
-            return j + 1  # +1 porque índice 0 = "No actualizar"
-    return 0
+            return j + 1  # match perfecto, retorna inmediatamente
+
+        # Prioridad 2: score por palabras compartidas
+        if desc_words and ing_words:
+            common = desc_words & ing_words
+            # Score = palabras comunes / palabras del ingrediente (cobertura)
+            score = len(common) / max(len(ing_words), 1)
+            if score > best_score and score >= 0.5:  # al menos 50% de cobertura
+                best_score = score
+                best_idx = j + 1
+
+    return best_idx
 
 
 def _update_inventory_from_items(line_items: list, inventory_items: list) -> int:
@@ -403,7 +488,6 @@ def _update_inventory_from_items(line_items: list, inventory_items: list) -> int
         if selected == "— No actualizar —":
             continue
 
-        # El label tiene formato "Nombre (unidad)"
         ing_name = selected.split(" (")[0].strip()
         inv_row  = inv_by_name.get(ing_name)
         if not inv_row:
@@ -416,10 +500,9 @@ def _update_inventory_from_items(line_items: list, inventory_items: list) -> int
         new_qty = float(inv_row.get("current_quantity") or 0) + qty
         db.table("inventory").update({
             "current_quantity": new_qty,
-            "updated_at": "now()",
+            "updated_at": datetime.utcnow().isoformat(),
         }).eq("id", inv_row["id"]).execute()
 
-        # Actualizar el cache local para si hay duplicados en la factura
         inv_by_name[ing_name]["current_quantity"] = new_qty
         updated += 1
 
@@ -431,10 +514,14 @@ def _render_ocr_review_form():
 
     ocr = st.session_state["ocr_result"]
 
-    # Cargar inventario para el mapeo (fuera del form para no bloquear la cache)
+    # Cargar inventario para el mapeo
     db = get_supabase_client()
-    inv_res = db.table("inventory").select("id, ingredient_name, unit, current_quantity") \
-                .order("ingredient_name").execute()
+    inv_res = (
+        db.table("inventory")
+        .select("id, ingredient_name, unit, current_quantity")
+        .order("ingredient_name")
+        .execute()
+    )
     inventory_items = inv_res.data or []
     inv_options = ["— No actualizar —"] + [
         f"{i['ingredient_name']} ({i['unit']})" for i in inventory_items
@@ -444,12 +531,20 @@ def _render_ocr_review_form():
     st.subheader("3. Revisar y confirmar datos")
 
     if ocr.get("needs_review"):
-        st.warning("⚠️ La IA detectó algunos campos dudosos. Por favor revisa los datos antes de guardar.")
+        st.warning(
+            "⚠️ La IA detectó algunos campos dudosos. "
+            "Por favor revisa los datos antes de guardar."
+        )
 
     confidence = ocr.get("confidence", 0)
-    conf_color = "green" if confidence >= 0.85 else "orange" if confidence >= 0.6 else "red"
+    conf_color = (
+        "green" if confidence >= 0.85
+        else "orange" if confidence >= 0.6
+        else "red"
+    )
     st.markdown(
-        f"Confianza OCR: <span style='color:{conf_color};font-weight:700'>{confidence*100:.0f}%</span>",
+        f"Confianza OCR: "
+        f"<span style='color:{conf_color};font-weight:700'>{confidence * 100:.0f}%</span>",
         unsafe_allow_html=True,
     )
 
@@ -457,7 +552,7 @@ def _render_ocr_review_form():
         col1, col2 = st.columns(2)
 
         with col1:
-            supplier_name  = st.text_input("Proveedor",        value=ocr.get("supplier_name") or "")
+            supplier_name  = st.text_input("Proveedor",         value=ocr.get("supplier_name") or "")
             invoice_number = st.text_input("Número de factura", value=ocr.get("invoice_number") or "")
             invoice_date   = st.date_input(
                 "Fecha de factura",
@@ -466,8 +561,11 @@ def _render_ocr_review_form():
             category = st.selectbox(
                 "Categoría",
                 ["Alimentos", "Bebidas", "Insumos", "Servicios", "Otros"],
-                index=max(0, list(CATEGORY_MAP.keys()).index(ocr.get("category", "Otros")))
-                      if ocr.get("category") in CATEGORY_MAP else 4,
+                index=(
+                    max(0, list(CATEGORY_MAP.keys()).index(ocr.get("category", "Otros")))
+                    if ocr.get("category") in CATEGORY_MAP
+                    else 4
+                ),
             )
 
         with col2:
@@ -482,7 +580,9 @@ def _render_ocr_review_form():
                 min_value=0.0,
                 format="%.2f",
             )
-            currency = st.text_input("Moneda", value=ocr.get("currency") or "USD", max_chars=3)
+            currency = st.text_input(
+                "Moneda", value=ocr.get("currency") or "USD", max_chars=3
+            )
             due_date = None
             if sale_type == "CREDITO":
                 due_date = st.date_input(
@@ -490,79 +590,126 @@ def _render_ocr_review_form():
                     value=_parse_date(ocr.get("due_date")) or date.today(),
                 )
 
-        notes = st.text_area("Notas adicionales", placeholder="Opcional...")
+        notes = st.text_area("Notas adicionales", placeholder="Opcional…")
 
-        # ── Paso 4: Mapeo de líneas → Inventario ─────────────────────────────
+        # ── Mapeo líneas → Inventario ────────────────────────────────────────
         line_items = ocr.get("line_items") or []
-        if line_items:
-            st.divider()
+        st.divider()
+
+        if not line_items:
+            st.warning(
+                "⚠️ **La IA no detectó líneas individuales** en esta factura. "
+                "El inventario NO se actualizará automáticamente. "
+                "Si compraste ingredientes, agrégalos manualmente en **Inventario → Cargar Ingreso**."
+            )
+        else:
+            # Contar cuántos tienen auto-match
+            auto_matches = sum(
+                1 for item in line_items
+                if _best_inventory_match(item.get("description", ""), inventory_items) > 0
+            )
+            no_matches = len(line_items) - auto_matches
+
             st.markdown(
                 "<p style='font-weight:700;font-size:0.95rem;margin-bottom:0.2rem'>"
-                "📦 4. Conectar con Inventario</p>"
-                "<p style='font-size:0.8rem;color:#64748B;margin-top:0;'>"
-                "Empareja cada línea de la factura con tu ingrediente. "
-                "La cantidad se sumará automáticamente al stock.</p>",
+                "📦 4. Conectar con Inventario</p>",
                 unsafe_allow_html=True,
             )
 
-            # Encabezados de columna
-            h1, h2, h3 = st.columns([3, 1, 3])
-            h1.caption("**Línea en factura**")
-            h2.caption("**Cantidad**")
-            h3.caption("**→ Ingrediente en inventario**")
+            if not inventory_items:
+                st.info(
+                    "ℹ️ No tienes ingredientes en el inventario aún. "
+                    "Agrega ingredientes en **Inventario → Cargar Ingreso** para poder mapear."
+                )
+            else:
+                if auto_matches > 0:
+                    st.success(
+                        f"✅ {auto_matches} línea(s) emparejadas automáticamente con tu inventario."
+                        + (f" · {no_matches} sin match — asígnalas manualmente si aplica." if no_matches else "")
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ Ninguna línea coincidió automáticamente con tus ingredientes. "
+                        "Selecciona manualmente el ingrediente correspondiente para cada línea, "
+                        "o deja '— No actualizar —' si no aplica."
+                    )
 
-            for idx, item in enumerate(line_items):
-                desc = item.get("description", "")
-                qty  = item.get("quantity", "")
-                unit = item.get("unit", "")
-                best = _best_inventory_match(desc, inventory_items)
-
-                c1, c2, c3 = st.columns([3, 1, 3])
-                c1.markdown(f"<small>{desc}</small>", unsafe_allow_html=True)
-                c2.markdown(f"<small>**{qty}** {unit}</small>", unsafe_allow_html=True)
-                c3.selectbox(
-                    "inv",
-                    options=inv_options,
-                    index=best,
-                    key=f"inv_map_{idx}",
-                    label_visibility="collapsed",
+                st.caption(
+                    "Empareja cada línea de la factura con tu ingrediente. "
+                    "La cantidad se sumará automáticamente al stock al guardar."
                 )
 
-        submitted = st.form_submit_button("💾 Guardar factura y actualizar inventario", type="primary", use_container_width=True)
+                h1, h2, h3 = st.columns([3, 1, 3])
+                h1.caption("**Línea en factura**")
+                h2.caption("**Cantidad**")
+                h3.caption("**→ Ingrediente en inventario**")
+
+                for idx, item in enumerate(line_items):
+                    desc = item.get("description", "")
+                    qty  = item.get("quantity", "")
+                    unit = item.get("unit", "")
+                    best = _best_inventory_match(desc, inventory_items)
+
+                    c1, c2, c3 = st.columns([3, 1, 3])
+                    c1.markdown(f"<small>{desc}</small>", unsafe_allow_html=True)
+                    c2.markdown(f"<small>**{qty}** {unit}</small>", unsafe_allow_html=True)
+                    c3.selectbox(
+                        "inv",
+                        options=inv_options,
+                        index=best,
+                        key=f"inv_map_{idx}",
+                        label_visibility="collapsed",
+                    )
+
+        submitted = st.form_submit_button(
+            "💾 Guardar factura y actualizar inventario",
+            type="primary",
+            use_container_width=True,
+        )
 
     if submitted:
-        with st.spinner("Guardando factura..."):
-            image_url = upload_invoice_image(
-                st.session_state["image_bytes"],
-                st.session_state.get("file_ext", "jpg"),
-            )
+        with st.spinner("Guardando factura…"):
+            try:
+                image_url = upload_invoice_image(
+                    st.session_state["image_bytes"],
+                    st.session_state.get("file_ext", "jpg"),
+                )
 
-            final_data = {
-                **ocr,
-                "supplier_name":  supplier_name,
-                "invoice_number": invoice_number,
-                "invoice_date":   invoice_date.isoformat(),
-                "category":       category,
-                "sale_type":      sale_type,
-                "total_amount":   total_amount,
-                "currency":       currency,
-                "due_date":       due_date.isoformat() if due_date else None,
-                "_notes":         notes,
-            }
+                final_data = {
+                    **ocr,
+                    "supplier_name":  supplier_name,
+                    "invoice_number": invoice_number,
+                    "invoice_date":   invoice_date.isoformat(),
+                    "category":       category,
+                    "sale_type":      sale_type,
+                    "total_amount":   total_amount,
+                    "currency":       currency,
+                    "due_date":       due_date.isoformat() if due_date else None,
+                    "_notes":         notes,
+                }
 
-            invoice_id = save_invoice_to_db(final_data, image_url, None)
+                invoice_id = save_invoice_to_db(final_data, image_url, None)
+            except Exception as e:
+                st.error(f"❌ Error al guardar la factura: {e}")
+                return
 
         if invoice_id:
-            # Actualizar inventario con las cantidades mapeadas
             n_updated = 0
             if line_items and inventory_items:
-                with st.spinner("Actualizando inventario..."):
+                with st.spinner("Actualizando inventario…"):
                     n_updated = _update_inventory_from_items(line_items, inventory_items)
 
-            st.success(
-                f"✅ Factura guardada (ID: `{invoice_id[:8]}...`)"
-                + (f" · **{n_updated} ingrediente(s) actualizados** en inventario 📦" if n_updated else "")
+            inv_msg = (
+                f" · **{n_updated} ingrediente(s) actualizados en inventario 📦**"
+                if n_updated
+                else (
+                    " · ⚠️ Inventario no actualizado (sin líneas mapeadas). "
+                    "Actualiza manualmente si es necesario."
+                    if line_items
+                    else ""
+                )
             )
+            st.success(f"✅ Factura guardada (ID: `{invoice_id[:8]}…`){inv_msg}")
             for key in ["ocr_result", "image_bytes", "mime_type", "file_ext"]:
                 st.session_state.pop(key, None)
             st.balloons()
