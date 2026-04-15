@@ -53,6 +53,13 @@ def render_accounting_page():
                               "Pagada": "PAGADA", "Anulada": "ANULADA"}
             selected_status = st.selectbox("Estado", list(status_options.keys()))
 
+        # Fila 2 de filtros: número de factura
+        inv_num_filter = st.text_input(
+            "🔢 Número de factura exacto",
+            placeholder="Ej: 001000010100000049080",
+            help="Filtra directamente por el número de factura en la base de datos.",
+        )
+
     # ── Query con filtros ────────────────────────────────────────────────────
     query = (
         db.table("invoices")
@@ -71,11 +78,13 @@ def render_accounting_page():
         query = query.eq("category_id", cat_options[selected_cat])
     if status_options[selected_status]:
         query = query.eq("status", status_options[selected_status])
+    if inv_num_filter and inv_num_filter.strip():
+        query = query.ilike("invoice_number", f"%{inv_num_filter.strip()}%")
 
     result = query.execute()
     invoices = result.data or []
 
-    # ── Filtro de texto libre ────────────────────────────────────────────────
+    # ── Filtro de texto libre (barra superior) ───────────────────────────────
     if search_text:
         q = search_text.strip().lower()
         invoices = [
@@ -197,7 +206,7 @@ def render_accounts_payable_page():
 
     db = get_supabase_client()
     st.title("💳 Cuentas por Pagar")
-    st.caption("Facturas de crédito pendientes, ordenadas por urgencia de pago.")
+    st.caption("Facturas de crédito pendientes, ordenadas por_urgencia de pago.")
 
     result = db.table("v_accounts_payable").select("*").execute()
     payables = result.data or []
