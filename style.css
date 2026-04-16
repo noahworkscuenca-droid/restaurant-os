@@ -56,16 +56,21 @@ div[data-testid="stRadio"] > div > label:hover {
 }
 
 /* ── Botones ────────────────────────────────────────────────────── */
-.stButton > button {
-    background-color: #2D303E;
-    color: white;
-    border-radius: 8px;
-    border: 1px solid #4CAF50;
-    font-weight: 600;
+.stButton > button,
+[data-testid="stFormSubmitButton"] > button {
+    background-color: #4CAF50 !important;
+    color: #0E1117 !important;
+    border-radius: 8px !important;
+    border: none !important;
+    font-weight: 700 !important;
+    font-size: 0.97rem !important;
+    transition: background 0.18s ease, transform 0.15s ease !important;
 }
-.stButton > button:hover {
-    background-color: #4CAF50;
-    color: #0E1117;
+.stButton > button:hover,
+[data-testid="stFormSubmitButton"] > button:hover {
+    background-color: #43a047 !important;
+    transform: translateY(-1px) !important;
+    color: #0E1117 !important;
 }
 
 /* ── Inputs y selectboxes ───────────────────────────────────────── */
@@ -121,6 +126,22 @@ div[data-testid="stRadio"] > div > label:hover {
 i.fas, i.fa-solid {
     margin-right: 8px;
     color: #4CAF50;
+}
+
+/* ── Login form ─────────────────────────────────────────────────── */
+[data-testid="stForm"] {
+    background-color: #1A1C23 !important;
+    border: 1px solid #2D303E !important;
+    border-radius: 14px !important;
+    padding: 1.5rem !important;
+}
+
+/* Input focus ring → green */
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus {
+    border-color: #4CAF50 !important;
+    box-shadow: 0 0 0 2px rgba(76,175,80,0.25) !important;
+    outline: none !important;
 }
 
 /* ── Block container padding ────────────────────────────────────── */
