@@ -5,7 +5,19 @@ import time
 import streamlit as st
 
 # 1. Configuración de pantalla
-st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="🍽️")
+st.set_page_config(page_title="Divende OS", layout="wide", page_icon="🍽️")
+
+# 2. CSS personalizado + FontAwesome
+try:
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+except FileNotFoundError:
+    pass
+st.markdown(
+    '<link rel="stylesheet" '
+    'href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">',
+    unsafe_allow_html=True,
+)
 
 
 # ── Pantalla de Login ────────────────────────────────────────────────────────
@@ -25,11 +37,10 @@ def check_password() -> bool:
     with col:
         st.markdown("<br><br>", unsafe_allow_html=True)
 
-        # Encabezado
         st.markdown(
             "<h1 style='text-align:center;font-size:3rem;margin-bottom:0'>🍽️</h1>"
-            "<h2 style='text-align:center;margin-top:0.3rem;margin-bottom:0.1rem'>RestaurantOS</h2>"
-            "<p style='text-align:center;color:#64748B;margin-top:0;margin-bottom:1.5rem'>"
+            "<h2 style='text-align:center;margin-top:0.3rem;margin-bottom:0.1rem'>Divende OS</h2>"
+            "<p style='text-align:center;color:#94A3B8;margin-top:0;margin-bottom:1.5rem'>"
             "Bienvenido · Inicia sesión para continuar</p>",
             unsafe_allow_html=True,
         )
@@ -48,7 +59,6 @@ def check_password() -> bool:
                     st.warning("Por favor, ingresa tu usuario o correo.")
                 elif password == correct:
                     st.session_state.logged_in = True
-                    # Guardamos el nombre para saludarlo dentro de la app
                     st.session_state.usuario_actual = usuario.split("@")[0].capitalize()
                     st.success(f"¡Acceso concedido! Bienvenido, {st.session_state.usuario_actual} 👋")
                     time.sleep(1)
@@ -57,7 +67,7 @@ def check_password() -> bool:
                     st.error("Contraseña incorrecta. Intenta de nuevo.")
 
         st.markdown(
-            "<p style='text-align:center;font-size:0.78rem;color:#CBD5E1;margin-top:1rem'>"
+            "<p style='text-align:center;font-size:0.78rem;color:#475569;margin-top:1rem'>"
             "Acceso con Google — próximamente</p>",
             unsafe_allow_html=True,
         )
@@ -68,75 +78,6 @@ def check_password() -> bool:
 # ── Guardián: detiene la app si no hay sesión ────────────────────────────────
 if not check_password():
     st.stop()
-
-# 2. Estilos globales
-st.markdown("""
-    <style>
-
-    /* ── Fondo general ─────────────────────────────────────────── */
-    .stApp { background-color: #F1F5F9; }
-    .block-container { padding-top: 2rem !important; }
-
-    /* ── Sidebar ───────────────────────────────────────────────── */
-    [data-testid="stSidebar"] { background-color: #1e293b; }
-    [data-testid="stSidebar"] * { color: white !important; }
-
-    /* Ocultar label del grupo de radio */
-    div[data-testid="stRadio"] > label { display: none !important; }
-
-    /* Ocultar círculos nativos del radio */
-    div[data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child,
-    div[data-testid="stRadio"] > div > label > div:first-child {
-        display: none !important;
-    }
-
-    /* Estilo de ítem de navegación */
-    div[data-testid="stRadio"] div[role="radiogroup"] > label,
-    div[data-testid="stRadio"] > div > label {
-        padding: 0.55rem 0.9rem !important;
-        border-radius: 8px !important;
-        margin-bottom: 3px !important;
-        cursor: pointer;
-        transition: background 0.15s ease;
-        font-size: 0.93rem !important;
-        display: block !important;
-    }
-    div[data-testid="stRadio"] div[role="radiogroup"] > label:hover,
-    div[data-testid="stRadio"] > div > label:hover {
-        background: rgba(255,255,255,0.10) !important;
-    }
-
-    /* ── Badges de tipo de venta ───────────────────────────────── */
-    .badge-contado {
-        background-color: #dbeafe; color: #1e40af;
-        padding: 2px 8px; border-radius: 12px;
-        font-size: 0.8em; font-weight: 600;
-    }
-    .badge-credito {
-        background-color: #fef3c7; color: #92400e;
-        padding: 2px 8px; border-radius: 12px;
-        font-size: 0.8em; font-weight: 600;
-    }
-
-    /* ── Badge de estado sidebar ───────────────────────────────── */
-    .status-badge {
-        background-color: #dcfce7; color: #166534;
-        padding: 8px; border-radius: 6px;
-        font-weight: bold; text-align: center; margin-top: 15px;
-    }
-
-    /* ── Contenedor de tabla ───────────────────────────────────── */
-    .table-wrap {
-        background: #fff;
-        border-radius: 14px;
-        padding: 1.2rem 1.4rem 0.5rem;
-        box-shadow: 0 1px 8px rgba(0,0,0,0.07);
-        border: 1px solid #E2E8F0;
-        margin-top: 0.5rem;
-    }
-
-    </style>
-    """, unsafe_allow_html=True)
 
 # 3. Importaciones de módulos
 from modules.dashboard import render_dashboard
@@ -149,7 +90,11 @@ from modules.recipes import render_recipes_page
 
 # 4. Barra Lateral
 with st.sidebar:
-    st.title("🍽️ RestaurantOS")
+    st.markdown(
+        '<h2 style="color:white;margin-bottom:0">'
+        '<i class="fas fa-utensils"></i> Divende OS</h2>',
+        unsafe_allow_html=True,
+    )
     st.divider()
     menu = st.radio(
         "Navegación",
@@ -167,7 +112,7 @@ with st.sidebar:
     )
     st.divider()
     st.markdown('<div class="status-badge">🟢 Base de datos OK</div>', unsafe_allow_html=True)
-    st.caption("v1.0 · Noah Cuenca")
+    st.caption("v2.0 · Noah Cuenca")
 
 # 5. Enrutamiento
 if menu == "📊 Dashboard":
