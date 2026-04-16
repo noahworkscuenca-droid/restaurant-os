@@ -1,90 +1,138 @@
+"""
+modules/recipes.py — Gestión de recetas (escandallo de platos)
+DB columns: dish_name, ingredient, quantity, unit
+"""
+
 import streamlit as st
 import pandas as pd
 from modules.database import get_supabase_client
 
 
 def render_recipes_page():
-    st.title("👨‍🍳 Gestión de Recetas")
-    st.info(
-        "Define qué ingredientes consume cada plato que vendes. "
-        "Estos datos permitirán descontar el inventario automáticamente al registrar ventas."
+    st.markdown(
+        '<h3><i class="fas fa-book-open"></i> Recetas (Mapeo de Ingredientes)</h3>',
+        unsafe_allow_html=True,
     )
+    st.write("Conecta cada plato de Loyverse con los ingredientes que consume del inventario.")
 
-    # ── Conexión protegida ──────────────────────────────────────────────────
     try:
         supabase = get_supabase_client()
-    except Exception:
-        st.error("No se detectan las llaves de Supabase en el archivo .env")
+    except Exception as e:
+        st.error(f"No se pudo conectar a la base de datos: {e}")
         return
 
-    # ── 1. Cargar ingredientes del inventario ───────────────────────────────
+    # ── Cargar ingredientes del inventario ────────────────────────────────────
     try:
-        inv_res = supabase.table("inventory").select("name, unit").order("name").execute()
-        ingredientes = {item["name"]: item.get("unit", "") for item in inv_res.data} if inv_res.data else {}
-    except Exception:
-        ingredientes = {}
+        inv_res = (
+            supabase.table("inventory")
+            .select("ingredient_name, unit")
+            .order("ingredient_name")
+            .execute()
+        )
+        inv_items = {
+            row["ingredient_name"]: row.get("unit", "")
+            for row in (inv_res.data or [])
+        }
+    except Exception as e:
+        st.warning(f"No se pudo cargar el inventario: {e}")
+        inv_items = {}
 
-    # ── 2. Formulario para añadir ingrediente a receta ──────────────────────
-    with st.expander("➕ Añadir ingrediente a una receta", expanded=True):
-        with st.form("recipe_form", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            dish = c1.text_input(
-                "Nombre del plato (como aparece en Loyverse)",
-                placeholder="Ej: Café Americano",
-            )
+    # ── Formulario ────────────────────────────────────────────────────────────
+    st.subheader("Añadir regla de receta")
 
-            if ingredientes:
-                ingrediente = c2.selectbox("Ingrediente del inventario", list(ingredientes.keys()))
-                unidad_auto = ingredientes.get(ingrediente, "")
-            else:
-                st.warning("⚠️ No hay ingredientes en el Inventario. Agrega primero tus insumos.")
-                ingrediente = c2.text_input("Nombre del ingrediente", placeholder="Ej: Granos de Café")
-                unidad_auto = ""
+    with st.form("form_receta", clear_on_submit=True):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        dish_name  = c1.text_input("Plato (nombre en Loyverse)", placeholder="Ej: Hamburguesa Sencilla")
 
-            c3, c4 = st.columns(2)
-            cantidad = c3.number_input("Cantidad por porción", min_value=0.001, step=0.001, format="%.3f")
-            unidad = c4.text_input("Unidad", value=unidad_auto, disabled=bool(unidad_auto))
+        if inv_items:
+            ingredient = c2.selectbox("Ingrediente a descontar", list(inv_items.keys()))
+        else:
+            st.info("⚠️ No hay ingredientes en inventario. Agrega en 📦 Inventario primero.")
+            ingredient = c2.text_input("Ingrediente (manual)", placeholder="Ej: Tomate")
 
-            submitted = st.form_submit_button("💾 Guardar ingrediente en receta", type="primary", use_container_width=True)
-            if submitted:
-                if not dish.strip():
-                    st.warning("Por favor escribe el nombre del plato.")
-                elif not ingrediente:
-                    st.warning("Selecciona un ingrediente.")
-                else:
+        quantity = c3.number_input("Cantidad", min_value=0.001, step=0.001, format="%.3f")
+
+        # Unidad automática si el ingrediente ya tiene una en inventario
+        unit_default = inv_items.get(ingredient, "g") if inv_items else "g"
+        unit = st.selectbox("Unidad", ["g", "kg", "ml", "l", "unidades"],
+                            index=["g", "kg", "ml", "l", "unidades"].index(unit_default)
+                            if unit_default in ["g", "kg", "ml", "l", "unidades"] else 0)
+
+        submitted = st.form_submit_button("💾 Guardar regla", type="primary")
+
+    if submitted:
+        if not dish_name.strip():
+            st.warning("Escribe el nombre del plato.")
+        elif not ingredient or not str(ingredient).strip():
+            st.warning("Selecciona o escribe un ingrediente.")
+        elif quantity <= 0:
+            st.warning("La cantidad debe ser mayor que 0.")
+        else:
+            try:
+                supabase.table("recipes").insert({
+                    "dish_name":  dish_name.strip(),
+                    "ingredient": str(ingredient).strip(),
+                    "quantity":   quantity,
+                    "unit":       unit,
+                }).execute()
+                st.success(
+                    f"✅ Guardado: **{ingredient}** ({quantity} {unit}) → **{dish_name}**"
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+    st.divider()
+
+    # ── Tabla de recetas ──────────────────────────────────────────────────────
+    st.subheader("📋 Reglas registradas")
+
+    try:
+        recipes_res = (
+            supabase.table("recipes")
+            .select("*")
+            .order("dish_name")
+            .execute()
+        )
+        rows = recipes_res.data or []
+    except Exception as e:
+        st.error(f"Error al cargar recetas: {e}")
+        rows = []
+
+    if not rows:
+        st.info("Aún no hay reglas. Usa el formulario de arriba para crear la primera.")
+    else:
+        df = pd.DataFrame(rows)
+        display_cols = [c for c in ["dish_name", "ingredient", "quantity", "unit"] if c in df.columns]
+        st.dataframe(
+            df[display_cols].rename(columns={
+                "dish_name":  "Plato",
+                "ingredient": "Ingrediente",
+                "quantity":   "Cantidad",
+                "unit":       "Unidad",
+            }),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        # ── Eliminar ──────────────────────────────────────────────────────────
+        if "id" in df.columns:
+            st.divider()
+            with st.expander("🗑️ Eliminar regla", expanded=False):
+                opciones = {
+                    f"{r['dish_name']} — {r['ingredient']} ({r.get('quantity','')} {r.get('unit','')})": r["id"]
+                    for r in rows
+                }
+                selected_label = st.selectbox(
+                    "Selecciona la regla a eliminar",
+                    options=list(opciones.keys()),
+                    key="recipe_delete_select",
+                )
+                if st.button("🗑️ Eliminar seleccionada", key="btn_delete_recipe"):
+                    rid = opciones[selected_label]
                     try:
-                        supabase.table("recipes").insert({
-                            "dish_name": dish.strip(),
-                            "ingredient_name": ingrediente,
-                            "quantity_needed": cantidad,
-                            "unit": unidad or unidad_auto,
-                        }).execute()
-                        st.success(f"✅ Guardado: {cantidad:.3f} {unidad or unidad_auto} de **{ingrediente}** → **{dish}**")
+                        supabase.table("recipes").delete().eq("id", rid).execute()
+                        st.toast("Regla eliminada.", icon="✅")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error al guardar: {e}")
-
-    # ── 3. Recetario actual ─────────────────────────────────────────────────
-    st.subheader("📋 Recetario actual")
-    try:
-        res = supabase.table("recipes").select("*").order("dish_name").execute()
-        if res.data:
-            df = pd.DataFrame(res.data)
-
-            # Agrupar por plato
-            platos = df["dish_name"].unique()
-            for plato in platos:
-                df_plato = df[df["dish_name"] == plato].copy()
-                with st.expander(f"🍽️ {plato}  ({len(df_plato)} ingrediente{'s' if len(df_plato) > 1 else ''})"):
-                    for _, row in df_plato.iterrows():
-                        col_nom, col_can, col_del = st.columns([4, 2, 1])
-                        col_nom.write(f"**{row['ingredient_name']}**")
-                        col_can.write(f"{row['quantity_needed']:.3f} {row.get('unit', '')}")
-                        if col_del.button("🗑️", key=f"del_{row['id']}", help="Borrar este ingrediente"):
-                            supabase.table("recipes").delete().eq("id", row["id"]).execute()
-                            st.rerun()
-        else:
-            st.info("Aún no tienes recetas creadas. Usa el formulario de arriba para empezar.")
-    except Exception as e:
-        st.warning(f"No se pudieron cargar las recetas: {e}")
-        st.write("Verifica que la tabla `recipes` existe en Supabase con las columnas: dish_name, ingredient_name, quantity_needed, unit")
+                        st.error(f"Error al eliminar: {e}")
