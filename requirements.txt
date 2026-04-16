@@ -12,9 +12,8 @@ postgrest>=0.16.0
 # Google Gemini (OCR de facturas) — nuevo SDK oficial
 google-genai>=1.0.0
 
-# HTTP client (Loyverse API) + timezone support
+# HTTP client (Loyverse API)
 requests>=2.31.0
-pytz>=2024.1
 
 # Image processing
 Pillow>=10.3.0
