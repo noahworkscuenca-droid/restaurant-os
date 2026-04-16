@@ -42,10 +42,7 @@ def render_dashboard():
     db    = get_supabase_client()
     today = date.today()
 
-    st.markdown(
-        '<h3><i class="fas fa-chart-line"></i> Dashboard</h3>',
-        unsafe_allow_html=True,
-    )
+    st.markdown("## 📊 Dashboard")
     st.caption(f"Resumen al {today.strftime('%d de %B de %Y')}")
 
     # ── Cargar todas las facturas (sin joins para evitar errores de FK) ───────
@@ -83,12 +80,8 @@ def render_dashboard():
             unsafe_allow_html=True,
         )
         df = pd.DataFrame(all_invoices)
-        _date_col = (
-            df["invoice_date"].fillna(df["created_at"])
-            if "invoice_date" in df.columns and "created_at" in df.columns
-            else df.get("invoice_date", df.get("created_at"))
-        )
-        df["_fecha"]       = pd.to_datetime(_date_col, errors="coerce").dt.date
+        df["_fecha"]       = pd.to_datetime(df.get("invoice_date") or df.get("created_at"),
+                                             errors="coerce").dt.date
         df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
 
         df_daily = (
