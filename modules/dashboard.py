@@ -83,8 +83,12 @@ def render_dashboard():
             unsafe_allow_html=True,
         )
         df = pd.DataFrame(all_invoices)
-        df["_fecha"]       = pd.to_datetime(df.get("invoice_date") or df.get("created_at"),
-                                             errors="coerce").dt.date
+        _date_col = (
+            df["invoice_date"].fillna(df["created_at"])
+            if "invoice_date" in df.columns and "created_at" in df.columns
+            else df.get("invoice_date", df.get("created_at"))
+        )
+        df["_fecha"]       = pd.to_datetime(_date_col, errors="coerce").dt.date
         df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
 
         df_daily = (
