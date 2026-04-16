@@ -1,0 +1,127 @@
+/* style.css — Divende OS dark theme */
+
+/* ── Fondo general y tipografía ────────────────────────────────── */
+.stApp {
+    background-color: #0E1117;
+    color: #FAFAFA;
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+/* Ocultar elementos nativos de Streamlit */
+#MainMenu { visibility: hidden; }
+footer    { visibility: hidden; }
+header    { background-color: transparent !important; }
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+[data-testid="stSidebar"] { background-color: #1e293b; }
+[data-testid="stSidebar"] * { color: white !important; }
+
+/* Ocultar label del grupo de radio */
+div[data-testid="stRadio"] > label { display: none !important; }
+
+/* Ocultar círculos nativos del radio */
+div[data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child,
+div[data-testid="stRadio"] > div > label > div:first-child {
+    display: none !important;
+}
+
+/* Estilo de ítem de navegación */
+div[data-testid="stRadio"] div[role="radiogroup"] > label,
+div[data-testid="stRadio"] > div > label {
+    padding: 0.55rem 0.9rem !important;
+    border-radius: 8px !important;
+    margin-bottom: 3px !important;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    font-size: 0.93rem !important;
+    display: block !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] > label:hover,
+div[data-testid="stRadio"] > div > label:hover {
+    background: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* ── Tarjetas de métricas ───────────────────────────────────────── */
+[data-testid="stMetric"] {
+    background-color: #1A1C23;
+    border: 1px solid #2D303E;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    border-color: #4CAF50;
+}
+
+/* ── Botones ────────────────────────────────────────────────────── */
+.stButton > button {
+    background-color: #2D303E;
+    color: white;
+    border-radius: 8px;
+    border: 1px solid #4CAF50;
+    font-weight: 600;
+}
+.stButton > button:hover {
+    background-color: #4CAF50;
+    color: #0E1117;
+}
+
+/* ── Inputs y selectboxes ───────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stSelectbox > div > div {
+    background-color: #1A1C23 !important;
+    color: #FAFAFA !important;
+    border-color: #2D303E !important;
+    border-radius: 8px;
+}
+
+/* ── Dataframe / tablas ─────────────────────────────────────────── */
+.table-wrap {
+    background: #1A1C23;
+    border-radius: 14px;
+    padding: 1.2rem 1.4rem 0.5rem;
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid #2D303E;
+    margin-top: 0.5rem;
+}
+
+/* ── Badges de tipo de venta ────────────────────────────────────── */
+.badge-contado {
+    background-color: #1e3a5f;
+    color: #93c5fd;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+}
+.badge-credito {
+    background-color: #3b2a00;
+    color: #fcd34d;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+}
+
+/* ── Badge de estado sidebar ────────────────────────────────────── */
+.status-badge {
+    background-color: #14532d;
+    color: #86efac;
+    padding: 8px;
+    border-radius: 6px;
+    font-weight: bold;
+    text-align: center;
+    margin-top: 15px;
+}
+
+/* ── FontAwesome icons ──────────────────────────────────────────── */
+i.fas, i.fa-solid {
+    margin-right: 8px;
+    color: #4CAF50;
+}
+
+/* ── Block container padding ────────────────────────────────────── */
+.block-container { padding-top: 2rem !important; }
