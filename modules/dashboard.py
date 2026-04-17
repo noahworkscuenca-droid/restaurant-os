@@ -1,11 +1,13 @@
 """
 modules/dashboard.py — Dashboard financiero de RestaurantOS
-Columnas reales de Supabase: invoice_date, supplier_id, total_amount, sale_type, status
+Gráfico principal: Plotly stacked bar desde v_accounting_summary.
+KPIs, alertas de stock (v_stock_status) y cuentas por pagar.
 """
 
 from datetime import date
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from modules.database import get_supabase_client
 
 
@@ -45,7 +47,7 @@ def render_dashboard():
     st.markdown("## 📊 Dashboard")
     st.caption(f"Resumen al {today.strftime('%d de %B de %Y')}")
 
-    # ── Cargar todas las facturas (sin joins para evitar errores de FK) ───────
+    # ── Cargar todas las facturas ─────────────────────────────────────────────
     try:
         res = (
             db.table("invoices")
@@ -72,28 +74,98 @@ def render_dashboard():
         m2.metric("🧾 Facturas registradas", str(total_invoices))
         m3.metric("📊 Promedio por factura", f"₡{avg_amount:,.2f}")
 
-        # Gráfico de gasto acumulado por día
-        st.markdown(
-            "<p style='margin:1.5rem 0 0.4rem;font-size:0.78rem;font-weight:700;"
-            "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
-            "Gasto acumulado por día</p>",
-            unsafe_allow_html=True,
-        )
-        df = pd.DataFrame(all_invoices)
-        df["_fecha"]       = pd.to_datetime(df.get("invoice_date") or df.get("created_at"),
-                                             errors="coerce").dt.date
-        df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
+    # ── Gráfico Plotly: Gasto por categoría y mes (v_accounting_summary) ─────
+    st.markdown(
+        "<p style='margin:1.5rem 0 0.4rem;font-size:0.78rem;font-weight:700;"
+        "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
+        "Gasto por categoría y mes</p>",
+        unsafe_allow_html=True,
+    )
 
-        df_daily = (
-            df.dropna(subset=["_fecha"])
-            .groupby("_fecha")["total_amount"]
-            .sum()
-            .reset_index()
-            .rename(columns={"_fecha": "Fecha", "total_amount": "Gasto (₡)"})
-            .sort_values("Fecha")
+    try:
+        summary_res = db.table("v_accounting_summary").select("*").execute()
+        summary_data = summary_res.data or []
+    except Exception as e:
+        st.warning(f"No se pudo cargar el resumen contable: {e}")
+        summary_data = []
+
+    if summary_data:
+        df_summary = pd.DataFrame(summary_data)
+        df_summary["total_amount"] = pd.to_numeric(df_summary["total_amount"], errors="coerce").fillna(0)
+
+        # Construir etiqueta de período: "2025-03", "2025-04", etc.
+        df_summary["periodo"] = (
+            df_summary["fiscal_year"].astype(str)
+            + "-"
+            + df_summary["fiscal_month"].astype(str).str.zfill(2)
         )
-        if not df_daily.empty:
-            st.line_chart(df_daily.set_index("Fecha")["Gasto (₡)"])
+
+        # Paleta de colores desde la vista (color_hex) o defecto Plotly
+        color_map = {}
+        if "color_hex" in df_summary.columns:
+            for _, row in df_summary.drop_duplicates("category_name").iterrows():
+                if row.get("color_hex"):
+                    color_map[row["category_name"]] = row["color_hex"]
+
+        fig = px.bar(
+            df_summary.sort_values("periodo"),
+            x="periodo",
+            y="total_amount",
+            color="category_name",
+            color_discrete_map=color_map if color_map else None,
+            barmode="stack",
+            labels={
+                "periodo":       "Período",
+                "total_amount":  "Gasto (₡)",
+                "category_name": "Categoría",
+            },
+            template="plotly_white",
+        )
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                title_text="",
+            ),
+            xaxis_title="",
+            yaxis_title="Gasto (₡)",
+            margin=dict(t=30, b=0, l=0, r=0),
+            height=350,
+        )
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>%{fullData.name}: ₡%{y:,.2f}<extra></extra>"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        # Fallback: gráfico de línea simple si no hay datos en la vista
+        if all_invoices:
+            df = pd.DataFrame(all_invoices)
+            _date_col = "invoice_date" if "invoice_date" in df.columns else "created_at"
+            df["_fecha"] = pd.to_datetime(df[_date_col], errors="coerce").dt.date
+            df["total_amount"] = pd.to_numeric(df["total_amount"], errors="coerce").fillna(0)
+
+            df_daily = (
+                df.dropna(subset=["_fecha"])
+                .groupby("_fecha")["total_amount"]
+                .sum()
+                .reset_index()
+                .rename(columns={"_fecha": "Fecha", "total_amount": "Gasto (₡)"})
+                .sort_values("Fecha")
+            )
+            if not df_daily.empty:
+                fig_line = px.line(
+                    df_daily,
+                    x="Fecha",
+                    y="Gasto (₡)",
+                    template="plotly_white",
+                    labels={"Gasto (₡)": "Gasto (₡)"},
+                )
+                fig_line.update_traces(line_color="#6366F1", line_width=2)
+                fig_line.update_layout(margin=dict(t=10, b=0, l=0, r=0), height=300)
+                st.plotly_chart(fig_line, use_container_width=True)
 
     st.divider()
 
@@ -144,7 +216,7 @@ def render_dashboard():
 
     try:
         p = db.table("v_accounts_payable").select("payment_urgency, total_amount").execute()
-        payables     = p.data or []
+        payables       = p.data or []
         overdue_count  = sum(1 for x in payables if x.get("payment_urgency") == "VENCIDA")
         overdue_amount = sum(float(x.get("total_amount") or 0) for x in payables
                              if x.get("payment_urgency") == "VENCIDA")
@@ -172,7 +244,7 @@ def render_dashboard():
         unsafe_allow_html=True,
     )
 
-    # ── Últimas 5 facturas (sin join a suppliers) ─────────────────────────────
+    # ── Últimas 5 facturas ────────────────────────────────────────────────────
     st.markdown(
         "<p style='margin:2rem 0 0.6rem;font-size:0.78rem;font-weight:700;"
         "color:#64748B;text-transform:uppercase;letter-spacing:0.08em;'>"
