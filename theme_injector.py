@@ -52,6 +52,19 @@ def apply_modern_theme():
         div[data-testid="stVerticalBlock"] > div > div {
             border-radius: 12px;
         }
+
+        /* Engrosar los números del Dashboard para que resalten */
+        [data-testid="stMetricValue"] {
+            font-weight: 800 !important;
+            color: #FFFFFF !important;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        /* Darle más presencia al título de Divende OS en el menú */
+        .menu-title {
+            font-weight: 900 !important;
+            letter-spacing: 0.5px;
+        }
         </style>
     """, unsafe_allow_html=True)
 
