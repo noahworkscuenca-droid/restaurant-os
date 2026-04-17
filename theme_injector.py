@@ -60,8 +60,8 @@ def apply_modern_theme():
         st.markdown("<br>", unsafe_allow_html=True)
         selected = option_menu(
             menu_title="Divende OS",
-            options=["Dashboard", "Escanear Factura", "Facturas", "Cuentas por Pagar", "Inventario", "Proveedores", "Loyverse POS", "Recetas"],
-            icons=["bar-chart-line-fill", "camera-fill", "receipt", "credit-card-fill", "box-seam-fill", "people-fill", "arrow-repeat", "journal-richtext"],
+            options=["Dashboard", "Escanear Factura", "Facturas", "Cuentas por Pagar", "Inventario", "Proveedores", "Loyverse POS", "Recetas", "Precios"],
+            icons=["bar-chart-line-fill", "camera-fill", "receipt", "credit-card-fill", "box-seam-fill", "people-fill", "arrow-repeat", "journal-richtext", "stars"],
             menu_icon="shop",
             default_index=0,
             styles={
