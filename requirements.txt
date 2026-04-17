@@ -24,3 +24,6 @@ pandas>=2.2.0
 
 # (Opcional) Para análisis avanzado y gráficos
 plotly>=5.20.0
+
+# Menú lateral moderno (Dark Tech theme)
+streamlit-option-menu>=0.3.13
