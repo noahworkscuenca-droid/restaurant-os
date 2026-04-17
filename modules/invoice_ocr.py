@@ -1,6 +1,8 @@
 """
 modules/invoice_ocr.py — Módulo de carga y clasificación de facturas
 Usa Google Gemini API (nuevo SDK google-genai) para extracción estructurada de datos OCR.
+Inventario: tabla 'products' + RPC register_inventory_movement.
+Freemium: máximo 5 escaneos por día (cuenta via tabla 'invoices').
 """
 
 import json
@@ -18,6 +20,9 @@ _STOP_WORDS = {
     "lt", "ml", "oz", "lbs", "unidad", "unidades", "caja", "bolsa",
     "paquete", "galon", "gal", "litro", "litros", "kilo", "kilos",
 }
+
+# Límite diario de escaneos en plan gratuito
+DAILY_SCAN_LIMIT = 5
 
 import streamlit as st
 from PIL import Image
@@ -96,6 +101,25 @@ CATEGORY_MAP = {
 }
 
 
+# ── Freemium: contador de escaneos del día ───────────────────────────────────
+
+def _count_today_invoices() -> int:
+    """Cuenta las facturas escaneadas hoy (basado en created_at de la tabla invoices)."""
+    try:
+        db = get_supabase_client()
+        today_str = date.today().isoformat()
+        res = (
+            db.table("invoices")
+            .select("id", count="exact")
+            .gte("created_at", today_str + "T00:00:00")
+            .lte("created_at", today_str + "T23:59:59")
+            .execute()
+        )
+        return res.count or 0
+    except Exception:
+        return 0
+
+
 def _build_prompt_with_aliases() -> str:
     """
     Construye el prompt OCR inyectando el diccionario de alias de proveedores
@@ -140,11 +164,10 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str
     Garantiza que el resultado sea < 1 MB reduciendo calidad iterativamente.
     Retorna (jpeg_bytes, "image/jpeg").
     """
-    MAX_PX       = 1024          # lado máximo en píxeles
-    TARGET_BYTES = 900_000       # límite conservador (< 1 MB)
+    MAX_PX       = 1024
+    TARGET_BYTES = 900_000
     DPI_PDF      = 150
 
-    # ── Convertir a imagen PIL ────────────────────────────────────────────────
     if mime_type == "application/pdf":
         if not PYMUPDF_AVAILABLE:
             raise ImportError("PyMuPDF no instalado. Ejecuta: pip install PyMuPDF")
@@ -158,11 +181,9 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    # ── Redimensionar si supera MAX_PX ────────────────────────────────────────
     if max(img.size) > MAX_PX:
         img.thumbnail((MAX_PX, MAX_PX), Image.Resampling.LANCZOS)
 
-    # ── Comprimir iterativamente hasta quedar bajo TARGET_BYTES ───────────────
     quality = 85
     while quality >= 40:
         buf = BytesIO()
@@ -171,7 +192,6 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str
             break
         quality -= 10
 
-    # Si con quality=40 sigue siendo grande, reducir la resolución a la mitad
     if buf.tell() > TARGET_BYTES:
         w, h = img.size
         img = img.resize((w // 2, h // 2), Image.Resampling.LANCZOS)
@@ -185,25 +205,20 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str
 
 def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """
-    Comprime el archivo y lo envía a Google Gemini 1.5 Flash para extracción
+    Comprime el archivo y lo envía a Google Gemini para extracción
     estructurada de datos de la factura.
     Retorna un dict con los campos extraídos o {"error": "..."} si falla.
     """
     raw_text = ""
     try:
-        # 1. Comprimir antes de enviar
         compressed_bytes, compressed_mime = _compress_for_gemini(image_bytes, mime_type)
-
-        # 2. Construir prompt (con alias de proveedores si existen)
         prompt = _build_prompt_with_aliases()
 
-        # 3. Empaquetar imagen con el nuevo SDK
         image_part = types.Part.from_bytes(
             data=compressed_bytes,
             mime_type=compressed_mime,
         )
 
-        # 4. Llamar a Gemini 2.5 Flash
         client = _get_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -211,8 +226,6 @@ def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> d
         )
 
         raw_text = response.text.strip()
-
-        # 5. Limpiar markdown si Gemini lo añade
         raw_text = re.sub(r"^```[a-z]*\n?", "", raw_text)
         raw_text = re.sub(r"\n?```$", "", raw_text)
 
@@ -337,6 +350,44 @@ def render_invoice_upload_page():
         "automáticamente."
     )
 
+    # ── Verificar límite freemium ─────────────────────────────────────────────
+    scans_today = _count_today_invoices()
+    remaining   = max(0, DAILY_SCAN_LIMIT - scans_today)
+
+    if scans_today >= DAILY_SCAN_LIMIT:
+        st.error(
+            f"🚫 **Límite diario alcanzado** — Has utilizado tus {DAILY_SCAN_LIMIT} escaneos "
+            "gratuitos de hoy. El contador se reinicia a medianoche.",
+            icon="🔒",
+        )
+        st.markdown(
+            """
+            <div style="background:linear-gradient(135deg,#6366F1,#8B5CF6);
+                        border-radius:14px;padding:1.5rem 1.8rem;color:#fff;margin-top:1rem;">
+                <p style="margin:0;font-size:1.1rem;font-weight:700">⚡ Actualiza a Pro</p>
+                <p style="margin:0.4rem 0 0;font-size:0.9rem;opacity:0.9">
+                    Con el plan Pro obtienes escaneos ilimitados, acceso prioritario a Gemini
+                    y soporte dedicado para tu restaurante.
+                </p>
+                <p style="margin:0.8rem 0 0;font-size:0.8rem;opacity:0.75">
+                    Contáctanos para activar tu cuenta Pro →
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Mostrar badge de uso del día
+    badge_color = "#10B981" if remaining >= 3 else ("#F59E0B" if remaining >= 1 else "#EF4444")
+    st.markdown(
+        f"<span style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:20px;"
+        f"padding:3px 12px;font-size:0.78rem;color:{badge_color};font-weight:600;'>"
+        f"🆓 Plan gratuito · {remaining} escaneo(s) restante(s) hoy</span>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
     col_upload, col_preview = st.columns([1, 1], gap="large")
 
     with col_upload:
@@ -424,13 +475,11 @@ def render_invoice_upload_page():
                         st.error(f"❌ Error al procesar: {err_msg}")
                     return
 
-                # Persistir resultado en session_state
                 st.session_state["ocr_result"]  = ocr_result
                 st.session_state["image_bytes"] = image_bytes
                 st.session_state["mime_type"]   = mime_type
                 st.session_state["file_ext"]    = file_ext
 
-        # Renderizar formulario de revisión si hay datos en sesión
         if st.session_state.get("ocr_result"):
             _render_ocr_review_form()
 
@@ -441,10 +490,10 @@ def _tokenize(text: str) -> set:
     return words - _STOP_WORDS
 
 
-def _best_inventory_match(description: str, inventory_items: list) -> int:
+def _best_product_match(description: str, products: list) -> int:
     """
-    Devuelve el índice en inv_options (0 = No actualizar) del mejor match
-    entre la descripción OCR y los nombres de inventario.
+    Devuelve el índice en prod_options (0 = No actualizar) del mejor match
+    entre la descripción OCR y los nombres de productos.
     Usa coincidencia exacta de subcadena primero, luego por palabras clave.
     """
     desc_lower = description.lower()
@@ -453,58 +502,80 @@ def _best_inventory_match(description: str, inventory_items: list) -> int:
     best_idx   = 0
     best_score = 0
 
-    for j, inv in enumerate(inventory_items):
-        ing = inv["ingredient_name"].lower()
-        ing_words = _tokenize(inv["ingredient_name"])
+    for j, prod in enumerate(products):
+        name = prod["name"].lower()
+        name_words = _tokenize(prod["name"])
 
         # Prioridad 1: coincidencia exacta de subcadena
-        if ing in desc_lower or desc_lower in ing:
-            return j + 1  # match perfecto, retorna inmediatamente
+        if name in desc_lower or desc_lower in name:
+            return j + 1
 
         # Prioridad 2: score por palabras compartidas
-        if desc_words and ing_words:
-            common = desc_words & ing_words
-            # Score = palabras comunes / palabras del ingrediente (cobertura)
-            score = len(common) / max(len(ing_words), 1)
-            if score > best_score and score >= 0.5:  # al menos 50% de cobertura
+        if desc_words and name_words:
+            common = desc_words & name_words
+            score = len(common) / max(len(name_words), 1)
+            if score > best_score and score >= 0.5:
                 best_score = score
                 best_idx = j + 1
 
     return best_idx
 
 
-def _update_inventory_from_items(line_items: list, inventory_items: list) -> int:
+def _update_products_from_items(line_items: list, products: list, invoice_id: Optional[str] = None) -> int:
     """
-    Lee las selecciones de mapeo del session_state (claves inv_map_0, inv_map_1, …)
-    y suma las cantidades OCR al inventario correspondiente.
-    Retorna el número de ingredientes actualizados.
+    Lee las selecciones de mapeo del session_state (claves prod_map_0, prod_map_1, …)
+    y registra movimientos de ENTRADA vía register_inventory_movement RPC.
+    Crea el producto si no existe aún.
+    Retorna el número de productos actualizados.
     """
     db = get_supabase_client()
-    inv_by_name = {i["ingredient_name"]: i for i in inventory_items}
+    prod_by_name = {p["name"]: p for p in products}
     updated = 0
 
     for idx, item in enumerate(line_items):
-        selected = st.session_state.get(f"inv_map_{idx}", "— No actualizar —")
+        selected = st.session_state.get(f"prod_map_{idx}", "— No actualizar —")
         if selected == "— No actualizar —":
             continue
 
-        ing_name = selected.split(" (")[0].strip()
-        inv_row  = inv_by_name.get(ing_name)
-        if not inv_row:
-            continue
+        prod_name = selected.split(" (")[0].strip()
+        prod_row  = prod_by_name.get(prod_name)
 
         qty = float(item.get("quantity") or 0)
         if qty <= 0:
             continue
 
-        new_qty = float(inv_row.get("current_quantity") or 0) + qty
-        db.table("inventory").update({
-            "current_quantity": new_qty,
-            "updated_at": datetime.utcnow().isoformat(),
-        }).eq("id", inv_row["id"]).execute()
+        # Auto-crear producto si no existe
+        if not prod_row:
+            unit_ocr = item.get("unit") or "Unidades"
+            new_prod = db.table("products").insert({
+                "name":            prod_name,
+                "unit_of_measure": unit_ocr,
+                "current_stock":   0,
+                "min_stock":       0,
+                "reorder_point":   0,
+                "is_active":       True,
+            }).execute()
+            if new_prod.data:
+                prod_row = new_prod.data[0]
+                prod_by_name[prod_name] = prod_row
+            else:
+                continue
 
-        inv_by_name[ing_name]["current_quantity"] = new_qty
-        updated += 1
+        try:
+            db.rpc("register_inventory_movement", {
+                "p_product_id":      prod_row["id"],
+                "p_movement_type":   "ENTRADA",
+                "p_quantity":        qty,
+                "p_unit_cost":       item.get("unit_price"),
+                "p_reference_type":  "FACTURA",
+                "p_reference_id":    invoice_id,
+                "p_reference_date":  None,
+                "p_notes":           f"OCR: {item.get('description', '')}",
+                "p_created_by":      None,
+            }).execute()
+            updated += 1
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo actualizar stock de '{prod_name}': {e}")
 
     return updated
 
@@ -514,17 +585,18 @@ def _render_ocr_review_form():
 
     ocr = st.session_state["ocr_result"]
 
-    # Cargar inventario para el mapeo
+    # Cargar productos para el mapeo
     db = get_supabase_client()
-    inv_res = (
-        db.table("inventory")
-        .select("id, ingredient_name, unit, current_quantity")
-        .order("ingredient_name")
+    prod_res = (
+        db.table("products")
+        .select("id, name, unit_of_measure, current_stock")
+        .eq("is_active", True)
+        .order("name")
         .execute()
     )
-    inventory_items = inv_res.data or []
-    inv_options = ["— No actualizar —"] + [
-        f"{i['ingredient_name']} ({i['unit']})" for i in inventory_items
+    products      = prod_res.data or []
+    prod_options  = ["— No actualizar —"] + [
+        f"{p['name']} ({p['unit_of_measure']})" for p in products
     ]
 
     st.divider()
@@ -592,7 +664,7 @@ def _render_ocr_review_form():
 
         notes = st.text_area("Notas adicionales", placeholder="Opcional…")
 
-        # ── Mapeo líneas → Inventario ────────────────────────────────────────
+        # ── Mapeo líneas → Productos ─────────────────────────────────────────
         line_items = ocr.get("line_items") or []
         st.divider()
 
@@ -603,10 +675,9 @@ def _render_ocr_review_form():
                 "Si compraste ingredientes, agrégalos manualmente en **Inventario → Cargar Ingreso**."
             )
         else:
-            # Contar cuántos tienen auto-match
             auto_matches = sum(
                 1 for item in line_items
-                if _best_inventory_match(item.get("description", ""), inventory_items) > 0
+                if _best_product_match(item.get("description", ""), products) > 0
             )
             no_matches = len(line_items) - auto_matches
 
@@ -616,50 +687,50 @@ def _render_ocr_review_form():
                 unsafe_allow_html=True,
             )
 
-            if not inventory_items:
+            if not products:
                 st.info(
-                    "ℹ️ No tienes ingredientes en el inventario aún. "
-                    "Agrega ingredientes en **Inventario → Cargar Ingreso** para poder mapear."
+                    "ℹ️ No tienes productos en el inventario aún. "
+                    "Puedes escribir el nombre del producto y se creará automáticamente al guardar."
+                )
+
+            if auto_matches > 0:
+                st.success(
+                    f"✅ {auto_matches} línea(s) emparejadas automáticamente con tu inventario."
+                    + (f" · {no_matches} sin match — asígnalas manualmente si aplica." if no_matches else "")
                 )
             else:
-                if auto_matches > 0:
-                    st.success(
-                        f"✅ {auto_matches} línea(s) emparejadas automáticamente con tu inventario."
-                        + (f" · {no_matches} sin match — asígnalas manualmente si aplica." if no_matches else "")
-                    )
-                else:
-                    st.warning(
-                        f"⚠️ Ninguna línea coincidió automáticamente con tus ingredientes. "
-                        "Selecciona manualmente el ingrediente correspondiente para cada línea, "
-                        "o deja '— No actualizar —' si no aplica."
-                    )
-
-                st.caption(
-                    "Empareja cada línea de la factura con tu ingrediente. "
-                    "La cantidad se sumará automáticamente al stock al guardar."
+                st.warning(
+                    "⚠️ Ninguna línea coincidió automáticamente con tus productos. "
+                    "Selecciona manualmente el producto correspondiente para cada línea, "
+                    "o deja '— No actualizar —' si no aplica."
                 )
 
-                h1, h2, h3 = st.columns([3, 1, 3])
-                h1.caption("**Línea en factura**")
-                h2.caption("**Cantidad**")
-                h3.caption("**→ Ingrediente en inventario**")
+            st.caption(
+                "Empareja cada línea de la factura con tu producto. "
+                "La cantidad se sumará automáticamente al stock al guardar."
+            )
 
-                for idx, item in enumerate(line_items):
-                    desc = item.get("description", "")
-                    qty  = item.get("quantity", "")
-                    unit = item.get("unit", "")
-                    best = _best_inventory_match(desc, inventory_items)
+            h1, h2, h3 = st.columns([3, 1, 3])
+            h1.caption("**Línea en factura**")
+            h2.caption("**Cantidad**")
+            h3.caption("**→ Producto en inventario**")
 
-                    c1, c2, c3 = st.columns([3, 1, 3])
-                    c1.markdown(f"<small>{desc}</small>", unsafe_allow_html=True)
-                    c2.markdown(f"<small>**{qty}** {unit}</small>", unsafe_allow_html=True)
-                    c3.selectbox(
-                        "inv",
-                        options=inv_options,
-                        index=best,
-                        key=f"inv_map_{idx}",
-                        label_visibility="collapsed",
-                    )
+            for idx, item in enumerate(line_items):
+                desc = item.get("description", "")
+                qty  = item.get("quantity", "")
+                unit = item.get("unit", "")
+                best = _best_product_match(desc, products)
+
+                c1, c2, c3 = st.columns([3, 1, 3])
+                c1.markdown(f"<small>{desc}</small>", unsafe_allow_html=True)
+                c2.markdown(f"<small>**{qty}** {unit}</small>", unsafe_allow_html=True)
+                c3.selectbox(
+                    "prod",
+                    options=prod_options,
+                    index=best,
+                    key=f"prod_map_{idx}",
+                    label_visibility="collapsed",
+                )
 
         submitted = st.form_submit_button(
             "💾 Guardar factura y actualizar inventario",
@@ -695,12 +766,12 @@ def _render_ocr_review_form():
 
         if invoice_id:
             n_updated = 0
-            if line_items and inventory_items:
+            if line_items:
                 with st.spinner("Actualizando inventario…"):
-                    n_updated = _update_inventory_from_items(line_items, inventory_items)
+                    n_updated = _update_products_from_items(line_items, products, invoice_id)
 
             inv_msg = (
-                f" · **{n_updated} ingrediente(s) actualizados en inventario 📦**"
+                f" · **{n_updated} producto(s) actualizados en inventario 📦**"
                 if n_updated
                 else (
                     " · ⚠️ Inventario no actualizado (sin líneas mapeadas). "
@@ -709,7 +780,7 @@ def _render_ocr_review_form():
                     else ""
                 )
             )
-            st.success(f"✅ Factura guardada (ID: `{invoice_id[:8]}…`){inv_msg}")
+            st.success(f"✅ Factura guardada (ID: `({invoice_id[:8]|…) {inv_msg}")
             for key in ["ocr_result", "image_bytes", "mime_type", "file_ext"]:
                 st.session_state.pop(key, None)
             st.balloons()
