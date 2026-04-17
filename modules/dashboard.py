@@ -113,6 +113,7 @@ def render_dashboard():
             y="total_amount",
             color="category_name",
             color_discrete_map=color_map if color_map else None,
+            color_discrete_sequence=["#10B981", "#3B82F6", "#6366F1", "#F59E0B", "#EF4444", "#8B5CF6"],
             barmode="stack",
             labels={
                 "periodo":       "Período",
