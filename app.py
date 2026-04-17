@@ -77,6 +77,7 @@ from modules.inventory import render_inventory_page
 from modules.suppliers import render_suppliers_page
 from modules.loyverse_sync import render_sync_page
 from modules.recipes import render_recipes_page
+from modules.pricing import render_pricing_page
 
 # ── Sidebar / Navegación ────────────────────────────────────
 # Importamos la función de diseño que creamos en el otro archivo
@@ -117,3 +118,5 @@ elif menu == "Loyverse POS":
     render_sync_page()
 elif menu == "Recetas":
     render_recipes_page()
+elif menu == "Precios":
+    render_pricing_page()
