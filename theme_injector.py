@@ -9,11 +9,14 @@ def apply_modern_theme():
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         /* Ocultar header pero preservar el botón del sidebar (visible en móvil) */
-        header {visibility: hidden;}
-        header [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stHeader"] {
+            background: transparent !important;
+            border-bottom: none !important;
+        }
         [data-testid="stSidebarCollapsedControl"] {
             visibility: visible !important;
             display: flex !important;
+            z-index: 9999 !important;
         }
 
         /* Fondo general oscuro y moderno */
@@ -101,3 +104,4 @@ def apply_modern_theme():
         st.caption("v1.0 · Noah Cuenca")
 
     return selected
+
