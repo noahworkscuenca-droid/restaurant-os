@@ -158,7 +158,7 @@ def _build_prompt_with_aliases() -> str:
 
 # ── Compresión de imagen ─────────────────────────────────────────────────────
 
-def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
+def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> "tuple[bytes, str]":
     """
     Convierte cualquier archivo (PDF o imagen) a JPEG comprimido.
     Garantiza que el resultado sea < 1 MB reduciendo calidad iterativamente.
