@@ -5,7 +5,7 @@ import time
 import streamlit as st
 
 # 1. Configuración de pantalla
-st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="🍽️")
+st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="🍽️", initial_sidebar_state="expanded")
 
 
 # ── Pantalla de Login ────────────────────────────────────────────────────────
