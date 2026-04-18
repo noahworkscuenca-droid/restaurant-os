@@ -780,7 +780,7 @@ def _render_ocr_review_form():
                     else ""
                 )
             )
-            st.success(f"✅ Factura guardada (ID: `({invoice_id[:8]|…) {inv_msg}")
+            st.success(f"✅ Factura guardada (ID: `{invoice_id[:8]}…`){inv_msg}")
             for key in ["ocr_result", "image_bytes", "mime_type", "file_ext"]:
                 st.session_state.pop(key, None)
             st.balloons()
