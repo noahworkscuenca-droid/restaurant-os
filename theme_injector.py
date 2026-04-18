@@ -8,7 +8,13 @@ def apply_modern_theme():
         /* Ocultar elementos nativos de Streamlit */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
+        /* Ocultar header pero preservar el botón del sidebar (visible en móvil) */
         header {visibility: hidden;}
+        header [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
+            visibility: visible !important;
+            display: flex !important;
+        }
 
         /* Fondo general oscuro y moderno */
         .stApp {
