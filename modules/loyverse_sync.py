@@ -3,34 +3,34 @@ import pandas as pd
 from modules.database import get_supabase_client
 
 def render_sync_page():
-    st.markdown("## 🔄 Sincronización Loyverse (Cierre de Turno)")
-    st.caption("Sube el archivo CSV de ventas diarias para actualizar el inventario automáticamente.")
+    st.markdown("## ð SincronizaciÃ³n Loyverse (Cierre de Turno)")
+    st.caption("Sube el archivo CSV de ventas diarias para actualizar el inventario automÃ¡ticamente.")
 
     # 1. El Uploader
-    uploaded_file = st.file_uploader("📂 Sube el archivo 'Ventas_por_articulo.csv'", type=["csv"])
+    uploaded_file = st.file_uploader("ð Sube el archivo 'Ventas_por_articulo.csv'", type=["csv"])
 
     if uploaded_file is not None:
         try:
             # 2. Leer y limpiar el CSV de Loyverse
             df_ventas = pd.read_csv(uploaded_file)
 
-            # Loyverse a veces trae columnas extrañas, nos aseguramos de tener lo básico
+            # Loyverse a veces trae columnas extraÃ±as, nos aseguramos de tener lo bÃ¡sico
             columnas_esperadas = ["Articulo", "Categoria", "Articulos vendidos"]
             if not all(col in df_ventas.columns for col in columnas_esperadas):
-                st.error("⚠️ El formato del archivo no es correcto. Asegúrate de descargar el reporte de 'Ventas por artículo'.")
+                st.error("â ï¸ El formato del archivo no es correcto. AsegÃºrate de descargar el reporte de 'Ventas por artÃ­culo'.")
                 return
 
-            # Filtramos solo lo que realmente se vendió (ignoramos devoluciones si las hay)
+            # Filtramos solo lo que realmente se vendiÃ³ (ignoramos devoluciones si las hay)
             df_ventas = df_ventas[df_ventas["Articulos vendidos"] > 0]
 
             # Mostrar resumen
-            st.success(f"✅ Archivo leído correctamente. Se encontraron {len(df_ventas)} platos/productos vendidos.")
+            st.success(f"â Archivo leÃ­do correctamente. Se encontraron {len(df_ventas)} platos/productos vendidos.")
 
             with st.expander("Ver detalle del cierre de ventas"):
                 st.dataframe(df_ventas[["Articulo", "Categoria", "Articulos vendidos"]], use_container_width=True)
 
-            # 3. El botón de Acción (El descuento real)
-            if st.button("🔽 Procesar Ventas y Descontar Inventario", type="primary", use_container_width=True):
+            # 3. El botÃ³n de AcciÃ³n (El descuento real)
+            if st.button("ð½ Procesar Ventas y Descontar Inventario", type="primary", use_container_width=True):
                 with st.spinner("Cruzando ventas con escandallos (recetas)..."):
                     db = get_supabase_client()
 
@@ -39,10 +39,10 @@ def render_sync_page():
                     recetas = res_recetas.data
 
                     if not recetas:
-                        st.warning("No tienes recetas configuradas. El sistema no sabe qué ingredientes descontar.")
+                        st.warning("No tienes recetas configuradas. El sistema no sabe quÃ© ingredientes descontar.")
                         return
 
-                    # Convertir recetas a un formato fácil de buscar (diccionario de listas)
+                    # Convertir recetas a un formato fÃ¡cil de buscar (diccionario de listas)
                     # { "Hamburguesa": [ {"ingrediente": "Pan", "cantidad": 1}, {"ingrediente": "Carne", "cantidad": 0.2} ] }
                     mapa_recetas = {}
                     for r in recetas:
@@ -73,17 +73,29 @@ def render_sync_page():
                     items_actualizados = 0
                     for ingrediente, cantidad_a_descontar in consumo_total.items():
                         try:
-                            # Llamamos a tu función SQL (soporte valores negativos para salidas)
-                            db.rpc('register_inventory_movement', {
-                                'p_product_name': ingrediente,
-                                'p_quantity_change': -abs(cantidad_a_descontar),  # Siempre negativo
-                                'p_movement_type': 'SALIDA_VENTA'
+                            # Buscar el product_id por nombre
+                            prod_res = db.table("products").select("id").ilike("name", ingrediente).limit(1).execute()
+                            if not prod_res.data:
+                                st.warning(f"â ï¸ Producto '{ingrediente}' no encontrado en inventario â omitido.")
+                                continue
+                            prod_id = prod_res.data[0]["id"]
+
+                            db.rpc("register_inventory_movement", {
+                                "p_product_id":     prod_id,
+                                "p_movement_type":  "SALIDA_VENTA",
+                                "p_quantity":       -abs(cantidad_a_descontar),
+                                "p_unit_cost":      None,
+                                "p_reference_type": "LOYVERSE",
+                                "p_reference_id":   None,
+                                "p_reference_date": None,
+                                "p_notes":          f"Cierre de turno: {ingrediente}",
+                                "p_created_by":     None,
                             }).execute()
                             items_actualizados += 1
                         except Exception as e:
                             st.error(f"Error al descontar {ingrediente}: {e}")
 
-                    st.success(f"🎉 ¡Cierre exitoso! Se descontaron {items_actualizados} ingredientes del inventario base.")
+                    st.success(f"ð Â¡Cierre exitoso! Se descontaron {items_actualizados} ingredientes del inventario base.")
                     st.balloons()
 
         except Exception as e:
