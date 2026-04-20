@@ -10,12 +10,13 @@ def apply_modern_theme():
         footer {visibility: hidden;}
         /* Ocultar header pero preservar el botón del sidebar (visible en móvil) */
         header {visibility: hidden;}
-        header [data-testid="stSidebarCollapsedControl"],
         [data-testid="stSidebarCollapsedControl"] {
             visibility: visible !important;
             display: flex !important;
+            opacity: 1 !important;
+            pointer-events: all !important;
+            z-index: 999999 !important;
         }
-
         /* Fondo general */
         .stApp {
             background-color: #0E1117;
