@@ -5,7 +5,12 @@ import time
 import streamlit as st
 
 # 1. Configuración de pantalla
-st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="🍽️", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="Divende",
+    layout="wide",
+    page_icon="🍽️",
+    initial_sidebar_state="collapsed",   # móvil: sidebar cerrado por defecto
+)
 
 
 # ── Pantalla de Login ────────────────────────────────────────────────────────
@@ -28,8 +33,8 @@ def check_password() -> bool:
         # Encabezado
         st.markdown(
             "<h1 style='text-align:center;font-size:3rem;margin-bottom:0'>🍽️</h1>"
-            "<h2 style='text-align:center;margin-top:0.3rem;margin-bottom:0.1rem'>RestaurantOS</h2>"
-            "<p style='text-align:center;color:#64748B;margin-top:0;margin-bottom:1.5rem'>"
+            "<h2 style='text-align:center;margin-top:0.3rem;margin-bottom:0.1rem'>Divende</h2>"
+            "<p style='text-align:center;color:#8B949E;margin-top:0;margin-bottom:1.5rem'>"
             "Bienvenido · Inicia sesión para continuar</p>",
             unsafe_allow_html=True,
         )
@@ -48,7 +53,6 @@ def check_password() -> bool:
                     st.warning("Por favor, ingresa tu usuario o correo.")
                 elif password == correct:
                     st.session_state.logged_in = True
-                    # Guardamos el nombre para saludarlo dentro de la app
                     st.session_state.usuario_actual = usuario.split("@")[0].capitalize()
                     st.success(f"¡Acceso concedido! Bienvenido, {st.session_state.usuario_actual} 👋")
                     time.sleep(1)
@@ -79,29 +83,10 @@ from modules.loyverse_sync import render_sync_page
 from modules.recipes import render_recipes_page
 from modules.pricing import render_pricing_page
 
-# ── Sidebar / Navegación ────────────────────────────────────
-# Importamos la función de diseño que creamos en el otro archivo
 from theme_injector import apply_modern_theme
-
-# Llamamos a la función y guardamos el resultado en la variable 'menu'
 menu = apply_modern_theme()
 
-# ESTE ES TU MENÚ VIEJO (Comentado por seguridad, no lo borres)
-# with st.sidebar:
-#     st.title("🍽️ RestaurantOS")
-#     st.divider()
-#     menu = st.radio(
-#         "Navegación",
-#         ["📊 Dashboard","📷 Escanear Factura","🧾 Facturas",
-#          "💳 Cuentas por Pagar","📦 Inventario","🤝 Proveedores",
-#          "🔄 Loyverse POS","🍳 Recetas"],
-#         label_visibility="collapsed",
-#     )
-#     st.divider()
-#     st.markdown('<div class="status-badge">🟢 Base de datos OK</div>', unsafe_allow_html=True)
-#     st.caption("v1.0 · Noah Cuenca")
-
-# 5. Enrutamiento (compatible con option_menu — sin emojis)
+# 5. Enrutamiento
 if menu == "Dashboard":
     render_dashboard()
 elif menu == "Escanear Factura":
