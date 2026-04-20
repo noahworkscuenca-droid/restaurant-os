@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Divende",
     layout="wide",
     page_icon="🍽️",
-    initial_sidebar_state="collapsed",   # móvil: sidebar cerrado por defecto
+    initial_sidebar_state="auto",         # desktop: abierto; móvil: cerrado
 )
 
 
