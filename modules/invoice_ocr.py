@@ -3,6 +3,7 @@ modules/invoice_ocr.py — Módulo de carga y clasificación de facturas
 Usa Google Gemini API (nuevo SDK google-genai) para extracción estructurada de datos OCR.
 Inventario: tabla 'products' + RPC register_inventory_movement.
 Freemium: máximo 5 escaneos por día (cuenta via tabla 'invoices').
+Validación: Pydantic FacturaSchema + regex fallback + fuzzy supplier matching.
 """
 
 import json
@@ -11,7 +12,7 @@ import uuid
 import os
 from datetime import date, datetime
 from io import BytesIO
-from typing import Optional
+from typing import Optional, List
 
 # Palabras que no sirven para matching (stop words en español)
 _STOP_WORDS = {
@@ -43,6 +44,93 @@ except ImportError:
 
 from modules.database import get_supabase_client
 
+# ── Pydantic ────────────────────────────────────────────────────────────────────────────
+try:
+    from pydantic import BaseModel, field_validator
+
+    class FacturaSchema(BaseModel):
+        """Valida y normaliza los campos extraídos por OCR antes de persistir."""
+        supplier_name:  Optional[str]   = None
+        invoice_number: Optional[str]   = None
+        invoice_date:   Optional[str]   = None
+        category:       Optional[str]   = "Otros"
+        sale_type:      Optional[str]   = "CONTADO"
+        subtotal:       Optional[float] = None
+        tax_amount:     Optional[float] = None
+        total_amount:   Optional[float] = None
+        currency:       Optional[str]   = "CRC"
+        due_date:       Optional[str]   = None
+        confidence:     Optional[float] = 0.5
+        needs_review:   Optional[bool]  = False
+
+        @field_validator("total_amount", "subtotal", "tax_amount", mode="before")
+        @classmethod
+        def _clean_amount(cls, v):
+            if v is None:
+                return None
+            try:
+                return float(str(v).replace(",", "").replace("₡", "").replace("$", "").strip())
+            except (ValueError, TypeError):
+                return None
+
+        @field_validator("invoice_date", "due_date", mode="before")
+        @classmethod
+        def _clean_date(cls, v):
+            if not v:
+                return None
+            s = str(v).strip()
+            try:
+                datetime.strptime(s[:10], "%Y-%m-%d")
+                return s[:10]
+            except ValueError:
+                pass
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y"):
+                try:
+                    return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+            return None
+
+        @field_validator("sale_type", mode="before")
+        @classmethod
+        def _clean_sale_type(cls, v):
+            if not v:
+                return "CONTADO"
+            return "CREDITO" if "CRED" in str(v).upper() else "CONTADO"
+
+        @field_validator("currency", mode="before")
+        @classmethod
+        def _clean_currency(cls, v):
+            if not v:
+                return "CRC"
+            norm = {
+                "COLONES": "CRC", "COLON": "CRC", "COLÓN": "CRC", "₡": "CRC",
+                "DOLARES": "USD", "DOLAR": "USD", "DÓLARES": "USD", "DÓLAR": "USD",
+                "EUROS": "EUR", "EURO": "EUR",
+            }
+            u = str(v).upper().strip()
+            return norm.get(u, u[:3] if len(u) >= 3 else u)
+
+        @field_validator("confidence", mode="before")
+        @classmethod
+        def _clean_confidence(cls, v):
+            try:
+                return max(0.0, min(1.0, float(v)))
+            except (TypeError, ValueError):
+                return 0.5
+
+        @field_validator("category", mode="before")
+        @classmethod
+        def _clean_category(cls, v):
+            return v if v in {"Alimentos", "Bebidas", "Insumos", "Servicios", "Otros"} else "Otros"
+
+    PYDANTIC_AVAILABLE = True
+
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    FacturaSchema = None  # type: ignore[assignment,misc]
+
+
 # Inicializar cliente Gemini (singleton lazy)
 _client: Optional["genai.Client"] = None  # type: ignore[name-defined]
 
@@ -63,33 +151,33 @@ def _get_client():
     return _client
 
 
-# ── Prompt de extracción OCR ─────────────────────────────────────────────────
+# ── Prompt de extracción OCR ─────────────────────────────────────────────────────────────────────────
 OCR_SYSTEM_PROMPT = """Eres un asistente experto en contabilidad de restaurantes.
 Analiza la imagen de una factura/ticket y extrae los datos en JSON con exactamente esta estructura.
 Si un campo no está visible o es ilegible, usa null. Responde ÚNICAMENTE con el JSON, sin markdown.
 
 {
-  "supplier_name": "string — Nombre del proveedor/empresa emisora",
-  "invoice_number": "string — Número de factura, ticket o recibo",
-  "invoice_date": "YYYY-MM-DD — Fecha de la factura (ISO 8601)",
-  "category": "string — UNO DE: Alimentos | Bebidas | Insumos | Servicios | Otros",
-  "sale_type": "string — CONTADO o CREDITO (si no se indica, usar CONTADO)",
-  "subtotal": "number — Subtotal antes de impuestos (null si no aparece)",
-  "tax_amount": "number — Monto de impuesto (IVA/IGV/etc). null si no aparece",
-  "total_amount": "number — Monto total a pagar (OBLIGATORIO)",
-  "currency": "string — Código de moneda: USD, EUR, MXN, COP, etc.",
-  "due_date": "YYYY-MM-DD — Fecha límite de pago si es crédito, null si es contado",
-  "line_items": [
+  \"supplier_name\": \"string — Nombre del proveedor/empresa emisora\",
+  \"invoice_number\": \"string — Número de factura, ticket o recibo\",
+  \"invoice_date\": \"YYYY-MM-DD — Fecha de la factura (ISO 8601)\",
+  \"category\": \"string — UNO DE: Alimentos | Bebidas | Insumos | Servicios | Otros\",
+  \"sale_type\": \"string — CONTADO o CREDITO (si no se indica, usar CONTADO)\",
+  \"subtotal\": \"number — Subtotal antes de impuestos (null si no aparece)\",
+  \"tax_amount\": \"number — Monto de impuesto (IVA/IGV/etc). null si no aparece\",
+  \"total_amount\": \"number — Monto total a pagar (OBLIGATORIO)\",
+  \"currency\": \"string — Código de moneda: USD, EUR, MXN, COP, etc.\",
+  \"due_date\": \"YYYY-MM-DD — Fecha límite de pago si es crédito, null si es contado\",
+  \"line_items\": [
     {
-      "description": "string",
-      "quantity": "number",
-      "unit": "string — kg/litros/unidad/caja/etc",
-      "unit_price": "number",
-      "line_total": "number"
+      \"description\": \"string\",
+      \"quantity\": \"number\",
+      \"unit\": \"string — kg/litros/unidad/caja/etc\",
+      \"unit_price\": \"number\",
+      \"line_total\": \"number\"
     }
   ],
-  "confidence": "number entre 0.0 y 1.0 — tu nivel de certeza en la extracción",
-  "needs_review": "boolean — true si hay datos dudosos o ilegibles"
+  \"confidence\": \"number entre 0.0 y 1.0 — tu nivel de certeza en la extracción\",
+  \"needs_review\": \"boolean — true si hay datos dudosos o ilegibles\"
 }"""
 
 CATEGORY_MAP = {
@@ -101,7 +189,7 @@ CATEGORY_MAP = {
 }
 
 
-# ── Freemium: contador de escaneos del día ───────────────────────────────────
+# ── Freemium: contador de escaneos del día ───────────────────────────────────────────────
 
 def _count_today_invoices() -> int:
     """Cuenta las facturas escaneadas hoy (basado en created_at de la tabla invoices)."""
@@ -156,13 +244,13 @@ def _build_prompt_with_aliases() -> str:
     return OCR_SYSTEM_PROMPT
 
 
-# ── Compresión de imagen ─────────────────────────────────────────────────────
+# ── Compresión de imagen ─────────────────────────────────────────────────────────────────────────────────
 
 def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> "tuple[bytes, str]":
     """
     Convierte cualquier archivo (PDF o imagen) a JPEG comprimido.
     Garantiza que el resultado sea < 1 MB reduciendo calidad iterativamente.
-    Retorna (jpeg_bytes, "image/jpeg").
+    Retorna (jpeg_bytes, \"image/jpeg\").
     """
     MAX_PX       = 1024
     TARGET_BYTES = 900_000
@@ -201,13 +289,154 @@ def _compress_for_gemini(image_bytes: bytes, mime_type: str) -> "tuple[bytes, st
     return buf.getvalue(), "image/jpeg"
 
 
-# ── Extracción OCR principal ─────────────────────────────────────────────────
+# ── Regex fallback ────────────────────────────────────────────────────────────────────────────────────
+
+def _extract_amounts_regex(raw_text: str) -> dict:
+    """
+    Extrae monto total y fecha del texto raw como respaldo cuando Gemini
+    no los devuelve o los devuelve vacíos.
+    """
+    result: dict = {}
+
+    # Total: busca variantes de \"TOTAL\" seguidas de un número
+    total_pats = [
+        r'(?:GRAN\s+TOTAL|TOTAL\s+A\s+PAGAR|TOTAL\s+FACTURA|TOTAL)[^\d]*([\d,]+\.?\d*)',
+        r'(?:MONTO\s+TOTAL|Monto\s+Total)[^\d]*([\d,]+\.?\d*)',
+        r'[$₡]\s*([\d,]+\.\d{2})\s*$',
+    ]
+    for pat in total_pats:
+        m = re.search(pat, raw_text, re.IGNORECASE | re.MULTILINE)
+        if m:
+            try:
+                result["total_amount"] = float(m.group(1).replace(",", ""))
+                break
+            except ValueError:
+                pass
+
+    # Fecha: ISO primero, luego formatos locales
+    date_pats = [
+        (r'(\d{4})-(\d{1,2})-(\d{1,2})',
+         lambda m: f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"),
+        (r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})',
+         lambda m: f"{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"),
+    ]
+    for pat, fmt in date_pats:
+        m = re.search(pat, raw_text)
+        if m:
+            try:
+                ds = fmt(m)
+                datetime.strptime(ds, "%Y-%m-%d")
+                result["invoice_date"] = ds
+                break
+            except ValueError:
+                pass
+
+    return result
+
+
+# ── Fuzzy supplier matching ────────────────────────────────────────────────────────────────────────────────────
+
+def _fuzzy_match_supplier(ocr_name: str, known_suppliers: list) -> Optional[str]:
+    """
+    Compara el nombre OCR con los proveedores conocidos (nombre + aliases).
+    Devuelve el nombre canónico si hay match, None si no.
+    Umbral: 50 % de tokens compartidos.
+    """
+    if not ocr_name or not known_suppliers:
+        return None
+
+    ocr_tokens = _tokenize(ocr_name)
+    ocr_lower  = ocr_name.lower()
+    best_score = 0.0
+    best_name  = None
+    THRESHOLD  = 0.50
+
+    for sup in known_suppliers:
+        canonical    = sup.get("name", "").strip()
+        aliases_raw  = sup.get("aliases", "") or ""
+        candidates   = [canonical] + [a.strip() for a in aliases_raw.split(",") if a.strip()]
+
+        for cand in candidates:
+            cand_lower = cand.lower()
+
+            # Exact substring match — immediate return
+            if cand_lower in ocr_lower or ocr_lower in cand_lower:
+                return canonical
+
+            # Token overlap score
+            cand_tokens = _tokenize(cand)
+            if ocr_tokens and cand_tokens:
+                common = ocr_tokens & cand_tokens
+                score  = len(common) / max(len(ocr_tokens), len(cand_tokens))
+                if score > best_score:
+                    best_score = score
+                    best_name  = canonical
+
+    return best_name if best_score >= THRESHOLD else None
+
+
+# ── Validación Pydantic + enriquecimiento ──────────────────────────────────────────────────────────────────────
+
+def _validate_ocr_result(raw_data: dict) -> dict:
+    """
+    Pipeline de validación post-OCR:
+      1. Pydantic: coerce y valida tipos
+      2. Regex: rellena total/fecha si faltan
+      3. Fuzzy: normaliza nombre del proveedor contra BD
+    Preserva _raw_response y line_items sin modificar.
+    """
+    _SCHEMA_FIELDS = {
+        "supplier_name", "invoice_number", "invoice_date", "category",
+        "sale_type", "subtotal", "tax_amount", "total_amount", "currency",
+        "due_date", "confidence", "needs_review",
+    }
+    # 1. Pydantic validation
+    if PYDANTIC_AVAILABLE and FacturaSchema is not None:
+        try:
+            validated = FacturaSchema(**{k: v for k, v in raw_data.items() if k in _SCHEMA_FIELDS})
+            clean = validated.model_dump()
+        except Exception:
+            clean = {k: raw_data.get(k) for k in _SCHEMA_FIELDS}
+    else:
+        clean = {k: raw_data.get(k) for k in _SCHEMA_FIELDS}
+
+    # 2. Regex fallback for missing fields
+    raw_response = raw_data.get("_raw_response", "")
+    if raw_response:
+        regex = _extract_amounts_regex(raw_response)
+        if not clean.get("total_amount") and regex.get("total_amount"):
+            clean["total_amount"] = regex["total_amount"]
+            clean["needs_review"] = True
+        if not clean.get("invoice_date") and regex.get("invoice_date"):
+            clean["invoice_date"] = regex["invoice_date"]
+
+    # 3. Fuzzy supplier matching
+    if clean.get("supplier_name"):
+        try:
+            db = get_supabase_client()
+            sup_res = db.table("suppliers").select("name, aliases").eq("is_active", True).execute()
+            known   = sup_res.data or []
+            matched = _fuzzy_match_supplier(clean["supplier_name"], known)
+            if matched:
+                clean["supplier_name"] = matched
+        except Exception:
+            pass
+
+    # Restore non-schema fields
+    for key in ("_raw_response", "line_items"):
+        if key in raw_data:
+            clean[key] = raw_data[key]
+
+    return clean
+
+
+# ── Extracción OCR principal ───────────────────────────────────────────────────────────────────────────────
 
 def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """
     Comprime el archivo y lo envía a Google Gemini para extracción
     estructurada de datos de la factura.
-    Retorna un dict con los campos extraídos o {"error": "..."} si falla.
+    Retorna un dict con los campos extraídos o {\"error\": \"...\"} si falla.
     """
     raw_text = ""
     try:
@@ -231,7 +460,7 @@ def extract_invoice_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> d
 
         data = json.loads(raw_text)
         data["_raw_response"] = raw_text
-        return data
+        return _validate_ocr_result(data)
 
     except json.JSONDecodeError as e:
         return {"error": f"Respuesta IA no es JSON válido: {e}", "_raw_response": raw_text}
@@ -339,7 +568,7 @@ def _get_or_create_supplier(supplier_name: Optional[str]) -> Optional[str]:
     return new_sup.data[0]["id"] if new_sup.data else None
 
 
-# ── Página Streamlit: Subir y escanear factura ───────────────────────────────
+# ── Página Streamlit: Subir y escanear factura ───────────────────────────────────────────────────────────────────────────────
 
 def render_invoice_upload_page():
     """Renderiza la página principal de escaneo/carga de facturas."""
@@ -350,7 +579,7 @@ def render_invoice_upload_page():
         "automáticamente."
     )
 
-    # ── Verificar límite freemium ─────────────────────────────────────────────
+    # ── Verificar límite freemium ─────────────────────────────────────────────────────────────────────────────────
     scans_today = _count_today_invoices()
     remaining   = max(0, DAILY_SCAN_LIMIT - scans_today)
 
@@ -362,14 +591,14 @@ def render_invoice_upload_page():
         )
         st.markdown(
             """
-            <div style="background:linear-gradient(135deg,#6366F1,#8B5CF6);
-                        border-radius:14px;padding:1.5rem 1.8rem;color:#fff;margin-top:1rem;">
-                <p style="margin:0;font-size:1.1rem;font-weight:700">⚡ Actualiza a Pro</p>
-                <p style="margin:0.4rem 0 0;font-size:0.9rem;opacity:0.9">
+            <div style=\"background:linear-gradient(135deg,#6366F1,#8B5CF6);
+                        border-radius:14px;padding:1.5rem 1.8rem;color:#fff;margin-top:1rem;\">
+                <p style=\"margin:0;font-size:1.1rem;font-weight:700\">⚡ Actualiza a Pro</p>
+                <p style=\"margin:0.4rem 0 0;font-size:0.9rem;opacity:0.9\">
                     Con el plan Pro obtienes escaneos ilimitados, acceso prioritario a Gemini
                     y soporte dedicado para tu restaurante.
                 </p>
-                <p style="margin:0.8rem 0 0;font-size:0.8rem;opacity:0.75">
+                <p style=\"margin:0.8rem 0 0;font-size:0.8rem;opacity:0.75\">
                     Contáctanos para activar tu cuenta Pro →
                 </p>
             </div>
@@ -383,7 +612,7 @@ def render_invoice_upload_page():
     st.markdown(
         f"<span style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:20px;"
         f"padding:3px 12px;font-size:0.78rem;color:{badge_color};font-weight:600;'>"
-        f"🆓 Plan gratuito · {remaining} escaneo(s) restante(s) hoy</span>",
+        f"🄓 Plan gratuito · {remaining} escaneo(s) restante(s) hoy</span>",
         unsafe_allow_html=True,
     )
     st.write("")
@@ -409,19 +638,19 @@ def render_invoice_upload_page():
                 else "jpg"
             )
 
-            # ── Vista previa ─────────────────────────────────────────────────
+            # ── Vista previa ────────────────────────────────────────────────────────────────────────────────────
             with col_preview:
                 st.subheader("Vista previa")
                 if mime_type == "application/pdf":
                     size_kb = len(image_bytes) / 1024
                     st.markdown(
-                        f"""<div style="background:#F8FAFC;border:2px dashed #CBD5E1;
+                        f"""<div style=\"background:#F8FAFC;border:2px dashed #CBD5E1;
                             border-radius:12px;padding:2.5rem 1rem;text-align:center;
-                            color:#64748B;margin-top:0.5rem;">
-                            <p style="font-size:3.5rem;margin:0">📄</p>
-                            <p style="font-weight:700;color:#0F172A;margin:0.5rem 0 0.2rem;">
+                            color:#64748B;margin-top:0.5rem;\">
+                            <p style=\"font-size:3.5rem;margin:0\">📄</p>
+                            <p style=\"font-weight:700;color:#0F172A;margin:0.5rem 0 0.2rem;\">
                                 {uploaded_file.name}</p>
-                            <p style="font-size:0.8rem;margin:0">
+                            <p style=\"font-size:0.8rem;margin:0\">
                                 {size_kb:.1f} KB · PDF listo para analizar</p>
                         </div>""",
                         unsafe_allow_html=True,
@@ -664,7 +893,7 @@ def _render_ocr_review_form():
 
         notes = st.text_area("Notas adicionales", placeholder="Opcional…")
 
-        # ── Mapeo líneas → Productos ─────────────────────────────────────────
+        # ── Mapeo líneas → Productos ─────────────────────────────────────────────────────────────────────────────────────────
         line_items = ocr.get("line_items") or []
         st.divider()
 
