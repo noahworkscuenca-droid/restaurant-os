@@ -8,14 +8,17 @@ def apply_modern_theme():
         /* Ocultar elementos nativos de Streamlit */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
-        /* Ocultar header pero preservar el botón del sidebar (visible en móvil) */
-        header {visibility: hidden;}
+        [data-testid="stHeader"] {
+            background: transparent !important;
+            border-bottom: none !important;
+        }
+        section[data-testid="stSidebar"] {
+            transform: translateX(0) !important;
+            min-width: 220px !important;
+            width: 220px !important;
+        }
         [data-testid="stSidebarCollapsedControl"] {
-            visibility: visible !important;
-            display: flex !important;
-            opacity: 1 !important;
-            pointer-events: all !important;
-            z-index: 999999 !important;
+            display: none !important;
         }
         /* Fondo general */
         .stApp {
