@@ -4,8 +4,7 @@ load_dotenv()
 import time
 import streamlit as st
 
-st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="ð½ï¸", initial_sidebar_state="expanded")
-
+st.set_page_config(page_title="RestaurantOS", layout="wide", page_icon="🍽️", initial_sidebar_state="expanded")
 
 def check_password() -> bool:
     if st.session_state.get("logged_in"):
@@ -15,18 +14,18 @@ def check_password() -> bool:
     with col:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown(
-            "<h1 style='text-align:center;font-size:3rem;margin-bottom:0'>ð½ï¸</h1>"
+            "<h1 style='text-align:center;font-size:3rem;margin-bottom:0'>🍽️</h1>"
             "<h2 style='text-align:center;margin-top:0.3rem;margin-bottom:0.1rem'>RestaurantOS</h2>"
             "<p style='text-align:center;color:#64748B;margin-top:0;margin-bottom:1.5rem'>"
-            "Bienvenido Â· Inicia sesiÃ³n para continuar</p>",
+            "Bienvenido · Inicia sesión para continuar</p>",
             unsafe_allow_html=True,
         )
 
         with st.form("login_form", border=True):
-            usuario  = st.text_input("âï¸ Correo electrÃ³nico o usuario", placeholder="ejemplo@correo.com")
-            password = st.text_input("ð ContraseÃ±a", type="password", placeholder="â¢â¢â¢â¢â¢â¢â¢â¢")
+            usuario  = st.text_input("✉️ Correo electrónico o usuario", placeholder="ejemplo@correo.com")
+            password = st.text_input("🔑 Contraseña", type="password", placeholder="••••••••")
             st.markdown("<br>", unsafe_allow_html=True)
-            submit = st.form_submit_button("Iniciar sesiÃ³n â", type="primary", use_container_width=True)
+            submit = st.form_submit_button("Iniciar sesión →", type="primary", use_container_width=True)
 
             if submit:
                 correct = st.secrets.get("APP_PASSWORD", "admin123")
@@ -35,14 +34,13 @@ def check_password() -> bool:
                 elif password == correct:
                     st.session_state.logged_in = True
                     st.session_state.usuario_actual = usuario.split("@")[0].capitalize()
-                    st.success(f"Â¡Acceso concedido! Bienvenido, {st.session_state.usuario_actual} ð")
+                    st.success(f"¡Acceso concedido! Bienvenido, {st.session_state.usuario_actual} 👋")
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.error("ContraseÃ±a incorrecta. Intenta de nuevo.")
+                    st.error("Contraseña incorrecta. Intenta de nuevo.")
 
     return False
-
 
 if not check_password():
     st.stop()
