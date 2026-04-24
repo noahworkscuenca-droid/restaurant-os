@@ -77,3 +77,4 @@ elif menu == "Recetas":
     render_recipes_page()
 elif menu == "Precios":
     render_pricing_page()
+ 
