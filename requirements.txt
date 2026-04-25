@@ -30,3 +30,6 @@ plotly>=5.20.0
 
 # Menú lateral moderno (Dark Tech theme)
 streamlit-option-menu>=0.3.13
+
+# Stripe (pagos y suscripciones)
+stripe>=8.0.0
