@@ -162,7 +162,7 @@ def check_password() -> bool:
             </div>
         """, unsafe_allow_html=True)
 
-        tab_google, tab_email = st.tabs(["", "📧  Email"])
+        tab_google, tab_email = st.tabs(["🔵  Google", "📧  Email"])
 
         with tab_google:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -196,9 +196,9 @@ def check_password() -> bool:
             )
             with st.form("email_form", border=False):
                 email    = st.text_input("✉️  Correo", placeholder="ejemplo@correo.com")
-                password = st.text_input("U0001F511  Contraseña", type="password", placeholder="••••••••")
+                password = st.text_input("🔑  Contraseña", type="password", placeholder="••••••••")
                 if mode == "Crear cuenta":
-                    nombre = st.text_input("U0001F464  Nombre completo", placeholder="Tu nombre")
+                    nombre = st.text_input("👤  Nombre completo", placeholder="Tu nombre")
                 else:
                     nombre = ""
                 st.markdown("<br>", unsafe_allow_html=True)
