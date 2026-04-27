@@ -9,10 +9,11 @@ from supabase import create_client, Client
 st.set_page_config(
     page_title="RestaurantOS",
     layout="wide",
-    page_icon="🍴",
+    page_icon="🍽️",
     initial_sidebar_state="expanded",
 )
- 
+
+# ── Supabase client (anon key — for auth) ──────────────────────────────────────────────
 SUPABASE_URL      = os.getenv("SUPABASE_URL")      or st.secrets.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_ANON_KEY", "")
 
@@ -24,9 +25,11 @@ _supabase: Client = (
 APP_URL     = st.secrets.get("APP_URL", "https://restaurant-o-iyyk7iuzmdrks8pthdwkeq.streamlit.app/")
 ADMIN_EMAIL = st.secrets.get("ADMIN_EMAIL", "noahworkscuenca@gmail.com")
 
+# ── Plan hierarchy helper ─────────────────────────────────────────────────────────────────
 PLAN_HIERARCHY = ["free", "basico", "profesional", "enterprise"]
 
 def has_plan(min_plan: str) -> bool:
+    """True if the logged-in user's plan is >= min_plan."""
     try:
         return (
             PLAN_HIERARCHY.index(st.session_state.get("user_plan", "free"))
@@ -35,9 +38,14 @@ def has_plan(min_plan: str) -> bool:
     except ValueError:
         return False
 
+# ── Session helpers ───────────────────────────────────────────────────────────────────────────────────
 def _set_session(user):
     meta = user.user_metadata or {}
-    name = meta.get("full_name") or meta.get("name") or user.email.split("@")[0]
+    name = (
+        meta.get("full_name")
+        or meta.get("name")
+        or user.email.split("@")[0]
+    )
     st.session_state.logged_in      = True
     st.session_state.user_id        = user.id
     st.session_state.user_email     = user.email
@@ -63,6 +71,7 @@ def _load_user_plan(user_id: str):
         st.session_state.user_plan = "free"
         st.session_state.is_admin  = False
 
+# ── Handle Google OAuth callback ────────────────────────────────────────────────────────────────
 def _handle_oauth_callback():
     code = st.query_params.get("code")
     if not code or not _supabase:
@@ -73,12 +82,13 @@ def _handle_oauth_callback():
         st.query_params.clear()
         st.rerun()
     except Exception as e:
-        st.error(f"Error al iniciar sesion con Google: {e}")
+        st.error(f"Error al iniciar sesión con Google: {e}")
         st.query_params.clear()
 
+# ── Handle Stripe return ──────────────────────────────────────────────────────────────────────────────────
 def _handle_stripe_return():
     if st.query_params.get("payment") == "success":
-        st.toast("Pago completado. Tu plan se activara en unos segundos.")
+        st.toast("✅ ¡Pago completado! Tu plan se activará en unos segundos.", icon="✅")
         if st.session_state.get("user_id"):
             _load_user_plan(st.session_state.user_id)
         st.query_params.clear()
@@ -86,20 +96,48 @@ def _handle_stripe_return():
 _handle_oauth_callback()
 _handle_stripe_return()
 
+# ── Login screen ───────────────────────────────────────────────────────────────────────────────────────
 LOGIN_CSS = """
 <style>
-[data-testid="stAppViewContainer"] { background: linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#0f172a 100%); min-height:100vh; }
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
+    min-height: 100vh;
+}
 [data-testid="stMain"] { background: transparent !important; }
 [data-testid="stHeader"] { background: transparent !important; }
-.login-card { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.10); border-radius:20px; padding:2.8rem 2.2rem 2.2rem; backdrop-filter:blur(16px); box-shadow:0 8px 48px rgba(0,0,0,0.5); margin-top:0.5rem; }
-.login-logo { font-size:3.8rem; text-align:center; display:block; margin-bottom:0.4rem; filter:drop-shadow(0 0 20px rgba(249,115,22,0.65)); }
-.login-title { text-align:center; font-size:2rem; font-weight:700; color:#f1f5f9; margin:0 0 0.25rem; letter-spacing:-0.5px; }
-.login-sub { text-align:center; color:#64748b; font-size:0.88rem; margin:0 0 1.8rem; }
-.g-btn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:0.78rem 1.2rem; background:#ffffff; color:#1f2937; border-radius:10px; font-size:0.95rem; font-weight:600; text-decoration:none !important; box-shadow:0 2px 10px rgba(0,0,0,0.3); transition:box-shadow 0.2s,transform 0.15s; }
-.g-btn:hover { box-shadow:0 4px 20px rgba(0,0,0,0.4); transform:translateY(-1px); color:#1f2937 !important; }
-[data-testid="stTabs"] [data-baseweb="tab"] { color:#94a3b8 !important; }
-[data-testid="stTabs"] [aria-selected="true"] { color:#f97316 !important; }
-[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color:#f97316 !important; }
+.login-card {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 20px;
+    padding: 2.8rem 2.2rem 2.2rem;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 8px 48px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
+    margin-top: 0.5rem;
+}
+.login-logo {
+    font-size: 3.8rem;
+    text-align: center;
+    display: block;
+    margin-bottom: 0.4rem;
+    filter: drop-shadow(0 0 20px rgba(249,115,22,0.65));
+}
+.login-title {
+    text-align: center;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    margin: 0 0 0.25rem;
+    letter-spacing: -0.5px;
+}
+.login-sub {
+    text-align: center;
+    color: #64748b;
+    font-size: 0.88rem;
+    margin: 0 0 1.8rem;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] { color: #94a3b8 !important; }
+[data-testid="stTabs"] [aria-selected="true"] { color: #f97316 !important; }
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: #f97316 !important; }
 </style>
 """
 
@@ -107,7 +145,10 @@ def check_password() -> bool:
     if st.session_state.get("logged_in"):
         return True
 
-    st.markdown("<style>[data-testid='stSidebar']{display:none!important}</style>", unsafe_allow_html=True)
+    st.markdown(
+        "<style>[data-testid='stSidebar']{display:none!important}</style>",
+        unsafe_allow_html=True,
+    )
     st.markdown(LOGIN_CSS, unsafe_allow_html=True)
 
     _, col, _ = st.columns([1, 1.25, 1])
@@ -117,11 +158,11 @@ def check_password() -> bool:
             <div class="login-card">
                 <span class="login-logo">🍽️</span>
                 <h2 class="login-title">RestaurantOS</h2>
-                <p class="login-sub">Bienvenido · Inicia sesion para continuar</p>
+                <p class="login-sub">Bienvenido · Inicia sesión para continuar</p>
             </div>
         """, unsafe_allow_html=True)
 
-        tab_google, tab_email = st.tabs(["🔵  Google", "📧  Email"])
+        tab_google, tab_email = st.tabs(["U0001F535  Google", "U0001F4E7  Email"])
 
         with tab_google:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -134,30 +175,35 @@ def check_password() -> bool:
                     google_url = res.url
                 except Exception:
                     google_url = None
+
                 if google_url:
                     st.markdown(
-                        f'<a href="{google_url}" target="_self" class="g-btn'' ><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20"/> Continuar con Google</a>',
+                        f'<a href="{google_url}" target="_self" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:0.75rem 1.2rem;background:#fff;color:#1f2937;border-radius:10px;font-size:0.95rem;font-weight:600;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);">'
+                        '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20"/> Continuar con Google</a>',
                         unsafe_allow_html=True,
                     )
                 else:
-                    st.info("Google OAuth no configurado. Usa Email.")
+                    st.info("Google OAuth no configurado. Usa el tab de Email.")
             else:
-                st.warning("Supabase no configurado.")
+                st.warning("⚠️ Supabase no configurado.")
             st.markdown("<br>", unsafe_allow_html=True)
 
         with tab_email:
             st.markdown("<br>", unsafe_allow_html=True)
-            mode = st.radio("", ["Iniciar sesion", "Crear cuenta"], horizontal=True, label_visibility="collapsed", key="auth_mode")
+            mode = st.radio(
+                "", ["Iniciar sesión", "Crear cuenta"],
+                horizontal=True, label_visibility="collapsed", key="auth_mode",
+            )
             with st.form("email_form", border=False):
                 email    = st.text_input("✉️  Correo", placeholder="ejemplo@correo.com")
-                password = st.text_input("🔑  Contrasena", type="password", placeholder="••••••••")
+                password = st.text_input("U0001F511  Contraseña", type="password", placeholder="••••••••")
                 if mode == "Crear cuenta":
-                    nombre = st.text_input("👤  Nombre completo", placeholder="Tu nombre")
+                    nombre = st.text_input("U0001F464  Nombre completo", placeholder="Tu nombre")
                 else:
                     nombre = ""
                 st.markdown("<br>", unsafe_allow_html=True)
                 submit = st.form_submit_button(
-                    "Iniciar sesion →" if mode == "Iniciar sesion" else "Registrarse →",
+                    "Iniciar sesión →" if mode == "Iniciar sesión" else "Registrarse →",
                     type="primary", use_container_width=True,
                 )
                 if submit:
@@ -165,21 +211,30 @@ def check_password() -> bool:
                         st.warning("Por favor completa todos los campos.")
                     elif _supabase:
                         try:
-                            if mode == "Iniciar sesion":
-                                r = _supabase.auth.sign_in_with_password({"email": email, "password": password})
+                            if mode == "Iniciar sesión":
+                                r = _supabase.auth.sign_in_with_password(
+                                    {"email": email, "password": password}
+                                )
                                 _set_session(r.user)
                                 st.rerun()
                             else:
-                                opts = {"options": {"data": {"full_name": nombre}}} if nombre else {}
-                                r = _supabase.auth.sign_up({"email": email, "password": password, **opts})
+                                opts = {}
+                                if nombre:
+                                    opts = {"options": {"data": {"full_name": nombre}}}
+                                r = _supabase.auth.sign_up(
+                                    {"email": email, "password": password, **opts}
+                                )
                                 if r.user:
-                                    st.success("Cuenta creada. Revisa tu correo para confirmarla y luego inicia sesion.")
+                                    st.success(
+                                        "✅ Cuenta creada. Revisa tu correo para confirmarla "
+                                        "y luego inicia sesión."
+                                    )
                         except Exception as e:
                             err = str(e)
                             if "Invalid login" in err or "invalid_credentials" in err:
-                                st.error("Correo o contrasena incorrectos.")
+                                st.error("Correo o contraseña incorrectos.")
                             elif "already registered" in err:
-                                st.error("Ya existe una cuenta con ese correo. Inicia sesion.")
+                                st.error("Ya existe una cuenta con ese correo. Inicia sesión.")
                             else:
                                 st.error(f"Error: {err}")
     return False
@@ -188,7 +243,7 @@ def check_password() -> bool:
 if not check_password():
     st.stop()
 
-# Module imports
+# ── Module imports ────────────────────────────────────────────────────────────────────────────────────
 from modules.dashboard      import render_dashboard
 from modules.invoice_ocr    import render_invoice_upload_page
 from modules.accounting     import render_accounting_page, render_accounts_payable_page
@@ -203,7 +258,7 @@ from theme_injector         import apply_modern_theme
 
 menu = apply_modern_theme()
 
-# Router
+# ── Router ─────────────────────────────────────────────────────────────────────────────────────────────
 if   menu == "Dashboard":         render_dashboard()
 elif menu == "Escanear Factura":  render_invoice_upload_page()
 elif menu == "Facturas":          render_accounting_page()
@@ -215,7 +270,8 @@ elif menu == "Recetas":           render_recipes_page()
 elif menu == "Precios":           render_pricing_page()
 elif menu == "Mi Plan":           render_billing_page()
 elif menu == "Admin":
-    if (st.session_state.get("is_admin") or st.session_state.get("user_email") == ADMIN_EMAIL):
+    if (st.session_state.get("is_admin")
+            or st.session_state.get("user_email") == ADMIN_EMAIL):
         render_admin_page()
     else:
-        st.error("Acceso denegado.")
+        st.error("⛔ Acceso denegado.")
