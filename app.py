@@ -12,7 +12,7 @@ st.set_page_config(
     page_icon="🍴",
     initial_sidebar_state="expanded",
 )
-
+ 
 SUPABASE_URL      = os.getenv("SUPABASE_URL")      or st.secrets.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_ANON_KEY", "")
 
