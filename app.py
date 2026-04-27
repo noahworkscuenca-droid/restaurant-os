@@ -162,7 +162,7 @@ def check_password() -> bool:
             </div>
         """, unsafe_allow_html=True)
 
-        tab_google, tab_email = st.tabs(["U0001F535  Google", "U0001F4E7  Email"])
+        tab_google, tab_email = st.tabs(["", "📧  Email"])
 
         with tab_google:
             st.markdown("<br>", unsafe_allow_html=True)
